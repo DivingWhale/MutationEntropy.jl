@@ -1,7 +1,3 @@
-# load data
-using BioStructures, LinearAlgebra
-using Test
-
 phi(r, eta, kappa) = exp(-(r/eta)^kappa)
 
 function gamma(coordinates::AbstractVector{Vector{Float64}}, eta::Int, gamma::Int)
@@ -24,14 +20,8 @@ function read_coordinates(filename::String)
     return coordinates
 end
 
-@testset "gamma" begin
-    coordinates = read_coordinates("./5XJH.pdb")
-    Γ = gamma(coordinates, 1, 1)
-    @test Γ' ≈ Γ
-    @test all(x->isapprox(x, 0; atol=1e-8), sum(Γ, dims=1))
-end
-
 function read_xvg(filename::String)
+    @info "Reading $filename"
     result = Tuple{Int, Float64}[]
     for line in eachline(filename)
         if startswith(line, "#") || startswith(line, "@") || isempty(line)
@@ -46,26 +36,3 @@ end
 function msf(Γ::AbstractMatrix)
     return diag(pinv(Γ))
 end
-
-##
-eta1, gamma1 = 1, 1
-eta2, gamma2 = 2, 2
-coordinates = read_coordinates("./5XJH.pdb")
-Γ1 = gamma(coordinates, eta1, gamma1)
-Γ2 = gamma(coordinates, eta2, gamma2)
-computed_msf = msf(Γ1 + Γ2)
-
-##
-experimental_data = read_xvg("5xjh_A298_10us_cat12_rmsf_bb.xvg")
-rmsf_exp = getindex.(experimental_data, 2)
-msf_exp = rmsf_exp.^(-2)
-
-# Plot computed_msf vs msf_exp, with CairoMakie
-using CairoMakie
-fig = Figure()
-ax = Axis(fig[1, 1])
-lines!(ax, msf_exp; label="Experimental MSF")
-lines!(ax, computed_msf; label="Computed MSF")
-# xlabel!(ax, "Experimental MSF")
-# ylabel!(ax, "Computed MSF")
-fig
