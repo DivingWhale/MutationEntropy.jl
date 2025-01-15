@@ -21,7 +21,6 @@ function read_coordinates(filename::String)
 end
 
 function read_xvg(filename::String)
-    @info "Reading $filename"
     result = Tuple{Int, Float64}[]
     for line in eachline(filename)
         if startswith(line, "#") || startswith(line, "@") || isempty(line)
@@ -35,4 +34,39 @@ end
 
 function msf(Γ::AbstractMatrix)
     return diag(pinv(Γ))
+end
+
+function read_pae(mutation::String)
+    data_path = "/data1/af3/af_output/"
+    pae_files = glob("$(mutation)_*", data_path)
+    pae_data = nothing
+    num_files = 0
+
+    for pae_file in pae_files
+        top1_files = glob("seed-*_sample-0", pae_file)
+        if !isempty(top1_files)
+            top1 = top1_files[1]
+            raw_data = JSON.parsefile(joinpath(top1, "confidences.json"))
+            pae_any = raw_data["pae"]
+            pae = map(x -> map(Float64, x), pae_any)
+        
+            # 如果你需要确保它是矩阵，并且之后使用convert，则可以使用 hcat 和 转置来保证它是一个Matrix{Float64}
+            pae =  hcat(pae...)'
+          
+            if pae_data === nothing
+               
+                println("Initializing pae_data with the shape:")
+                println(size(pae))
+                pae_data = zeros(Float64, size(pae))
+            end
+           
+            pae_data .+= pae
+            num_files += 1
+        end
+    end
+     if num_files > 0
+         return pae_data ./ num_files
+     else
+         return nothing
+     end
 end

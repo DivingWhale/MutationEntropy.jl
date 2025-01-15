@@ -25,3 +25,16 @@ end
     msf_exp = rmsf_exp.^(-2)
     @test all(>(0), msf_exp)
 end
+##
+eta1, gamma1 = 20, 7
+eta2, gamma2 = 13, 10
+coordinates = read_coordinates(pkgdir(MutationEntropy, "data", "5XJH.pdb"))
+Γ1 = gamma(coordinates, eta1, gamma1)
+Γ2 = gamma(coordinates, eta2, gamma2)
+computed_msf = MutationEntropy.msf(Γ1 + Γ2)
+# computed_msf = computed_msf
+experimental_data = MutationEntropy.read_xvg(pkgdir(MutationEntropy, "data", "5xjh_A298_10us_cat12_rmsf_bb.xvg"))
+rmsf_exp = getindex.(experimental_data, 2)
+msf_exp = rmsf_exp.^(2)
+fig = plot_msf(msf_exp, computed_msf)
+fig
