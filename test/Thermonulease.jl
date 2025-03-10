@@ -29,42 +29,52 @@ ddG_exp = filter(row -> !ismissing(row[:ddG]), ddG_exp)
 # ddG_exp[(ddG_exp.position .== 172) .& (ddG_exp.mutation .== "S"), :ddG]
 
 ## Process the data
-rho = 1
-initial_A = [1.0] 
-lower_bound = [-20000.0] 
-upper_bound = [20000.0] 
+using Statistics
 
-# 使用 Optim.jl 进行优化
-result = optimize(
-    (A_vec) -> MutationEntropy.objective_function(A_vec, task_file_path, rho, single_ddG, ddG_exp, Γ, WT_pae, paes),
-    lower_bound,
-    upper_bound,
-    initial_A,
-    Fminbox(LBFGS())
-)
+# Define grid search parameters
+A_range = range(-100.0, 0.0, step=1)
+rho_range = [x for x in 0.0:0.1:3.0 if abs(x - 2.0) > 1e-10]  # Exclude rho = 2
 
-# 获取最优 A 值和最大 PCC
-optimal_A::Float64 = Optim.minimizer(result)[1]
-max_pcc::Float64 = -Optim.minimum(result)
-filtered_ddG_exp, ΔΔGs, r_ddGs = MutationEntropy.calculate_ddgs(task_file_path, single_ddG, Γ, WT_pae, paes, ddG_exp, rho, A)
-println(cor(r_ddGs, filtered_ddG_exp), " ", cor(ΔΔGs, r_ddGs))
+# Initialize variables to store best results
+best_pcc = -Inf
+best_A = nothing
+best_rho = nothing
+best_ddgs = nothing
+best_r_ddgs = nothing
+best_filtered_exp = nothing
 
-# 打印结果
-println("Optimal A: ", optimal_A)
-println("Max PCC: ", max_pcc)
+# Perform grid search
+for A_test in A_range, rho_test in rho_range
+    # println("A: ", A_test, " rho: ", rho_test)
+    filtered_ddG_exp, ΔΔGs, r_ddGs = MutationEntropy.calculate_ddgs(
+        task_file_path, single_ddG, Γ, WT_pae, paes, ddG_exp, 
+        rho_test, A_test
+    )
+    
+    current_pcc = cor(filtered_ddG_exp, ΔΔGs)
+    
+    if current_pcc > best_pcc
+        best_pcc = current_pcc
+        best_A = A_test
+        best_rho = rho_test
+        best_ddgs = ΔΔGs
+        best_r_ddgs = r_ddGs
+        best_filtered_exp = filtered_ddG_exp
+    end
+end
+
+# Print results
+println("Best parameters found:")
+println("A: ", best_A)
+println("rho: ", best_rho)
+println("Max PCC: ", best_pcc)
+println("Correlation between ΔΔG_exp and r_ddGs: ", cor(best_filtered_exp, best_r_ddgs))
 
 ## Plot the results
 using CairoMakie
 
-A = optimal_A
-
-
-using Statistics
-cor(r_ddGs, filtered_ddG_exp)
-cor(ΔΔGs, r_ddGs)
-
 fig = Figure()
 ax = Axis(fig[1, 1])
-# scatter!(ax, filtered_ddG_exp, ΔΔGs, marker=:circle, markersize=8, label="ΔΔG_exp")
-scatter!(ax, filtered_ddG_exp, r_ddGs, color=:red, marker=:circle, markersize=5, label="ΔΔG")
+scatter!(ax, best_filtered_exp, best_r_ddgs, color=:red, marker=:circle, markersize=5, label="ΔΔG")
+# scatter!(ax, best_filtered_exp, best_ddgs, color=:blue, marker=:circle, markersize=5, label="ΔΔG_pred")
 fig

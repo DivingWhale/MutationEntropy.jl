@@ -80,7 +80,7 @@ function read_paes(task_file_path::String)
     return paes
 end
 
-function ΔΔS(position::Int64, rho::Int64, Γ::Matrix{Float64}, PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64})
+function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64})
     indices = findall(x -> isapprox(x, 0.0, atol=1e-6), Γ[position-87, :])
     ΔΔS = 0.0
     for i in indices
@@ -94,7 +94,34 @@ function ΔΔG_prime(A::Float64, ΔΔS::Float64, ΔΔG::Float64)
     return ΔΔG + A * ΔΔS
 end
 
-function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64},  Γ::Matrix{Float64}, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Int64, A::Float64)
+"""
+    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, Γ::Matrix{Float64}, 
+                  WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, 
+                  ddG_exp::DataFrame, rho::Float64, A::Float64)
+
+Calculate the predicted ΔΔG values for a set of mutations.
+
+# Arguments
+- `task_file_path::String`: Path to file containing list of mutations to analyze
+- `single_ddG::Dict{String, Float64}`: Dictionary mapping mutation strings to Rosetta ddG values
+- `Γ::Matrix{Float64}`: The Gamma matrix representing structural contacts
+- `WT_pae::Matrix{Float64}`: PAE matrix for wild-type protein
+- `paes::Dict{String, Matrix{Float64}}`: Dictionary mapping mutations to their PAE matrices
+- `ddG_exp::DataFrame`: DataFrame containing experimental ddG values
+- `rho::Float64`: Parameter controlling contribution of PAE differences
+- `A::Float64`: Scaling parameter for entropy contribution
+
+# Returns
+- `filtered_ddG_exp::Vector{Float64}`: Filtered experimental ddG values
+- `ΔΔGs::Vector{Float64}`: Predicted total ddG values including entropy contribution
+- `r_ddGs::Vector{Float64}`: Original Rosetta ddG predictions
+
+# Description
+This function processes a list of mutations and calculates predicted stability changes (ΔΔG)
+by combining Rosetta predictions with an entropy term derived from predicted aligned error (PAE)
+matrices. It filters and aligns experimental data for comparison.
+"""
+function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64},  Γ::Matrix{Float64}, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64)
     num_muts = countlines(task_file_path)
     ΔΔGs = zeros(num_muts)
     filtered_ddG_exp = zeros(num_muts)
@@ -122,14 +149,4 @@ function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64
     ΔΔGs = ΔΔGs[1:count]
     r_ddGs = r_ddGs[1:count]
     return filtered_ddG_exp, ΔΔGs, r_ddGs
-end
-
-function objective_function(A_vec::Vector{Float64}, task_file_path::String, rho::Int64, single_ddG::Dict{String, Float64}, ddG_exp::DataFrame, Γ::Matrix{Float64}, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}})::Float64
-    A::Float64 = A_vec[1] # 解包向量中的第一个元素
-    filtered_ddG_exp, ΔΔGs, _ = calculate_ddgs(task_file_path, single_ddG, Γ, WT_pae, paes, ddG_exp, rho, A)
-    if all(x -> x == 0, filtered_ddG_exp) || all(x -> x == 0, ΔΔGs)
-        return Inf # 如果有一个向量全0，返回无穷大来避免计算
-    else
-        return -cor(filtered_ddG_exp, ΔΔGs)
-    end
 end
