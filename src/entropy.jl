@@ -36,8 +36,7 @@ function msf(Γ::AbstractMatrix)
     return diag(pinv(Γ))
 end
 
-function read_single_pae(mutation::String)
-    data_path = "/data1/af3/af_output/"
+function read_single_pae(data_path::String, mutation::String)
     pae_files = glob("$(mutation)_*", data_path)
     pae_data = nothing
     num_files = 0
@@ -71,7 +70,7 @@ function read_paes(task_file_path::String)
         for line in eachline(file)
             mutation = string(strip(line))
             println(mutation)
-            pae = read_single_pae(mutation)
+            pae = read_single_pae("data", mutation)
             if pae !== nothing
                 paes[mutation] = pae
             end
@@ -95,9 +94,7 @@ function ΔΔG_prime(A::Float64, ΔΔS::Float64, ΔΔG::Float64)
 end
 
 """
-    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, Γ::Matrix{Float64}, 
-                  WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, 
-                  ddG_exp::DataFrame, rho::Float64, A::Float64)
+    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, Γ::Matrix{Float64}, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::Dat`aF`rame, rho::Float64, A::Float64)
 
 Calculate the predicted ΔΔG values for a set of mutations.
 

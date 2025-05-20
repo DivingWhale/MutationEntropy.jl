@@ -8,7 +8,7 @@ using IterTools
 using Statistics
 using DataFrames
 
-export read_coordinates, read_xvg, plot_msf
+export read_coordinates, read_xvg, plot_msf, calculate_ddgs
 
 include("entropy.jl")
 include("visualization.jl")
