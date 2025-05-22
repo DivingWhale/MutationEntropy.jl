@@ -3,18 +3,18 @@ using Test
 using Optim
 
 # Compute the Gamma matrix
-function compute_gamma()
-    eta1, gamma1 = 1, 1
-    eta2, gamma2 = 2, 2
-    coordinates = read_coordinates(pkgdir(MutationEntropy, "data", "1EY0.pdb"))
-    Γ1 = MutationEntropy.gamma(coordinates, eta1, gamma1)
-    Γ2 = MutationEntropy.gamma(coordinates, eta2, gamma2)
-    return Γ = Γ1 + Γ2
-end
-Γ = compute_gamma()
+# function compute_gamma()
+#     eta1, gamma1 = 1, 1
+#     eta2, gamma2 = 2, 2
+#     coordinates = read_coordinates(pkgdir(MutationEntropy, "data", "1EY0.pdb"))
+#     Γ1 = MutationEntropy.gamma(coordinates, eta1, gamma1)
+#     Γ2 = MutationEntropy.gamma(coordinates, eta2, gamma2)
+#     return Γ = Γ1 + Γ2
+# end
+# Γ = compute_gamma()
 
 # Read ddG data of Rosetta
-ddG_path = "data"
+ddG_path = "../data"
 single_ddG = MutationEntropy.read_ddGs(ddG_path)
 
 # Read the PAE data
