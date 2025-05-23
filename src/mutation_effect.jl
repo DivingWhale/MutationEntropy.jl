@@ -420,3 +420,18 @@ function collect_strains(datadir::String, protein::String;
     
     return final_averaged_values
 end
+
+function calculate_ME(Strain::Dict{Int, Float64}, Strain_wt::Dict{Int, Float64})
+    # Check if dictionaries have the same keys
+    if keys(Strain) != keys(Strain_wt)
+        error("Strain and Strain_wt dictionaries must have the same keys")
+    end
+
+    # Calculate the Mutation Entropy (ME) as the sum of differences
+    ME = Dict{Int, Float64}()
+    for site in keys(Strain)
+        ME[site] = abs(Strain[site] - Strain_wt[site])
+    end
+    
+    return ME
+end

@@ -44,18 +44,33 @@ nearby_residues = MutationEntropy.find_residues_within_distance(140, "data", 1, 
 wt_pae = MutationEntropy.read_paes("data", "thermonulease", 1)
 
 using MutationEntropy
-
+## Test the different alpha values
 data_path = "data"
 
 actual_range = 83:231
+alpha = 2.0
 
 # Use the new collect_strains function to calculate average strain values
 # for the range of residues (actual_range) over 20 rounds
-final_averaged_values = MutationEntropy.collect_strains(
+wt_avg_S_values = MutationEntropy.collect_strains(
     data_path,                # Base directory for data
     "thermonulease",          # Protein name
-    alpha=2.0,                # Alpha parameter for strain calculation
+    alpha=alpha,                # Alpha parameter for strain calculation
     residue_range=actual_range, # Range of residues to analyze
     num_rounds=20,            # Number of rounds to average
     verbose=true              # Print progress information
 )
+
+a140e_avg_S_values = MutationEntropy.collect_strains(
+    data_path,                # Base directory for data
+    "a140e",                  # Mutation name
+    alpha=alpha,                # Alpha parameter for strain calculation
+    residue_range=actual_range, # Range of residues to analyze
+    num_rounds=20,            # Number of rounds to average
+    verbose=true              # Print progress information
+)
+
+a140e_ME = MutationEntropy.calculate_ME(a140e_avg_S_values, wt_avg_S_values)
+
+# Plot ME vs Distance using the CairoMakie implementation
+fig = MutationEntropy.plot_MEvsDist(a140e_ME, data_path, "a140e")

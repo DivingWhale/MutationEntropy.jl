@@ -16,5 +16,6 @@ include("entropy.jl")
 include("visualization.jl")
 include("ddg.jl")
 include("mutation_effect.jl")
+include("plot_functions.jl")
 
 end
