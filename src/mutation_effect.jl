@@ -35,8 +35,13 @@ function get_structure_dimension(datadir::String, mutation::String, round::Int)
     model_pdb = joinpath(subfolder, "model.pdb")
     
     if !isfile(model_pdb)
-        # Convert CIF to PDB using Python script
-        cmd = `python src/convert.py $subfolder`
+        # Convert CIF to PDB using Python script with conda environment
+        script_path = abspath(joinpath(@__DIR__, "convert.py"))
+        subfolder_abs = abspath(subfolder)
+        conda_env = "bio"
+        
+        cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
+        println("Running conversion with conda: $cmd")
         run(cmd)
         
         if !isfile(model_pdb)
@@ -79,12 +84,30 @@ function get_dist_map(datadir::String, mutation::String, round::Int)
     model_pdb = joinpath(subfolder, "model.pdb")
     
     if !isfile(model_pdb)
-        # Convert CIF to PDB using Python script
-        cmd = `python src/convert.py $subfolder`
-        run(cmd)
+        # Check if CIF file exists
+        cif_file = joinpath(subfolder, "model.cif")
+        if !isfile(cif_file)
+            error("Neither PDB nor CIF file found in $subfolder")
+        end
+
+        # Get absolute paths to ensure correct file access
+        script_path = abspath(joinpath(@__DIR__, "convert.py"))
+        subfolder_abs = abspath(subfolder)
         
-        if !isfile(model_pdb)
-            error("Unable to create PDB file: $model_pdb")
+        try
+            # Use the conda environment by activating it first
+            conda_env = "bio"  # Your conda environment name
+            
+            # Create a command that activates the conda environment and runs the Python script
+            cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
+            run(cmd)
+            
+            if !isfile(model_pdb)
+                error("Conversion completed but PDB file not created at $model_pdb")
+            end
+        catch e
+            println("Error during conversion: $e")
+            error("Failed to convert CIF to PDB. See above error message.")
         end
     end
     
@@ -207,7 +230,13 @@ function get_low_plddt_residues(mutation::String, round::Int, datadir::String; t
     
     # Check if model.pdb exists, if not create it from model.cif
     if !isfile(model_pdb)
-        cmd = `python src/convert.py $subfolder`
+        # Convert CIF to PDB using Python script with conda environment
+        script_path = abspath(joinpath(@__DIR__, "convert.py"))
+        subfolder_abs = abspath(subfolder)
+        conda_env = "bio"
+        
+        cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
+        println("Running conversion with conda: $cmd")
         run(cmd)
         
         if !isfile(model_pdb)

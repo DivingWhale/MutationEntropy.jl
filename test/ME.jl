@@ -18,7 +18,7 @@ task_file = joinpath(data_path, "task")
 task_lines = readlines(task_file)
 
 # Read the available mutations from task file or directory structure
-mutations = ["a140e", "a140g", "a140v", "a142c", "a142f", "a142g", "a142v", "a151g", "a151t"]
+mutations = [mutant, "a140g", "a140v", "a142c", "a142f", "a142g", "a142v", "a151g", "a151t"]
 
 # Example: Using the new process_multiple_mutations function with parallel processing
 println("Starting parallel processing of multiple mutations...")
@@ -38,7 +38,7 @@ results = MutationEntropy.process_multiple_mutations(
 println("Processing complete. Processed $(length(results)) mutations.")
 
 # Get residues within distance for a specific round
-nearby_residues = MutationEntropy.find_residues_within_distance(140, "data", 1, "a140e")
+nearby_residues = MutationEntropy.find_residues_within_distance(140, "data", 1, mutant)
 
 # Read PAE matrix for a specific round
 wt_pae = MutationEntropy.read_paes("data", "thermonulease", 1)
@@ -46,6 +46,7 @@ wt_pae = MutationEntropy.read_paes("data", "thermonulease", 1)
 using MutationEntropy
 ## Test the different alpha values
 data_path = "data"
+mutant = "a140e"
 
 actual_range = 83:231
 alpha = 2.0
@@ -61,16 +62,16 @@ wt_avg_S_values = MutationEntropy.collect_strains(
     verbose=true              # Print progress information
 )
 
-a140e_avg_S_values = MutationEntropy.collect_strains(
+mutant_avg_S_values = MutationEntropy.collect_strains(
     data_path,                # Base directory for data
-    "a140e",                  # Mutation name
+    mutant,                  # Mutation name
     alpha=alpha,                # Alpha parameter for strain calculation
     residue_range=actual_range, # Range of residues to analyze
     num_rounds=20,            # Number of rounds to average
     verbose=true              # Print progress information
 )
 
-a140e_ME = MutationEntropy.calculate_ME(a140e_avg_S_values, wt_avg_S_values)
+mutant_ME = MutationEntropy.calculate_ME(mutant_avg_S_values, wt_avg_S_values)
 
 # Plot ME vs Distance using the CairoMakie implementation
-fig = MutationEntropy.plot_MEvsDist(a140e_ME, data_path, "a140e")
+fig = MutationEntropy.plot_MEvsDist(mutant_ME, data_path, mutant)

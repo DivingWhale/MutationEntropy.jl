@@ -30,9 +30,9 @@ function plot_MEvsDist(ME::Dict{Int, Float64}, datadir::String, mutation::String
     # Create a figure with CairoMakie
     fig = Figure(size=(800, 600))
     ax = Axis(fig[1, 1], 
-              title="Mutation Entropy vs Distance from $(mutation) site",
+              title="Mutation Effect vs Distance from $(mutation) site",
               xlabel="Distance from mutation site (Å)",
-              ylabel="Mutation Entropy")
+              ylabel="Mutation Effect")
     
     # Scatter plot
     scatter!(ax, distances, me_values, 
@@ -48,7 +48,7 @@ function plot_MEvsDist(ME::Dict{Int, Float64}, datadir::String, mutation::String
     end
     
     # Save the plot
-    save("ME_vs_Dist_$(mutation)_round$(round).png", fig)
+    save("figs/ME_vs_Dist_$(mutation)_round$(round).png", fig)
     
     return fig
 end
@@ -84,9 +84,9 @@ function plot_MEvsDist(ME::Dict{Int, Float64}, dists::Matrix{Float64},
     # Create a figure with CairoMakie
     fig = Figure(resolution=(800, 600))
     ax = Axis(fig[1, 1], 
-              title="Mutation Entropy vs Distance from $(mutation) site",
+              title="Mutation Effect vs Distance from $(mutation) site",
               xlabel="Distance from mutation site (Å)",
-              ylabel="Mutation Entropy")
+              ylabel="Mutation Effect")
     
     # Scatter plot
     scatter!(ax, distances, me_values, 
