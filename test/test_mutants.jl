@@ -1,11 +1,21 @@
-using Distributed
-@everywhere using MutationEntropy
 using CairoMakie
 
 """
-计算多个突变体的突变熵(ME)
+    test_mutants_with_alpha(mutations, data_path, alpha, residue_range, num_rounds, verbose, plot_results)
 
-此函数基于给定的alpha值计算多个突变体的突变熵，并可选地绘制结果
+Calculate Mutation Entropy (ME) for multiple protein mutants.
+
+This function calculates mutation entropy values for a list of protein mutants
+based on a given alpha parameter value, and optionally plots the results.
+
+# Arguments
+- `mutations::Vector{String}`: List of mutation identifiers to analyze
+- `data_path::String="data"`: Base directory containing protein data
+- `alpha::Float64=2.0`: Exponent parameter for strain calculation
+- `residue_range=83:231`: Range of residues to analyze
+- `num_rounds::Int=20`: Number of simulation rounds to average over
+- `verbose::Bool=true`: Whether to print progress information
+- `plot_results::Bool=true`: Whether to generate and save plots
 """
 function test_mutants_with_alpha(
     mutations::Vector{String}, 
@@ -16,56 +26,56 @@ function test_mutants_with_alpha(
     verbose::Bool=true,
     plot_results::Bool=true
 )
-    # 计算野生型应变值(只需计算一次作为参考)
-    println("计算野生型应变值...")
+    # Calculate wild-type strain values (only need to do this once as reference)
+    println("Calculating wild-type strain values...")
     wt_avg_S_values = MutationEntropy.collect_strains(
-        data_path,                # 数据基本目录
-        "thermonulease",          # 蛋白质名称
-        alpha=alpha,              # 应变计算的alpha参数
-        residue_range=residue_range, # 分析的残基范围
-        num_rounds=num_rounds,    # 平均的轮次数
-        verbose=verbose           # 显示进度信息
+        data_path,                # Base data directory
+        "thermonulease",          # Protein name
+        alpha=alpha,              # Alpha parameter for strain calculation
+        residue_range=residue_range, # Range of residues to analyze
+        num_rounds=num_rounds,    # Number of rounds to average
+        verbose=verbose           # Show progress information
     )
     
-    # 处理每个突变体
+    # Process each mutant
     for (i, mutant) in enumerate(mutations)
-        println("处理突变体 $i/$(length(mutations)): $mutant")
+        println("Processing mutant $i/$(length(mutations)): $mutant")
         
-        # 计算突变体应变值
+        # Calculate mutant strain values
         mutant_avg_S_values = MutationEntropy.collect_strains(
-            data_path,            # 数据基本目录
-            mutant,               # 突变名称
-            alpha=alpha,          # 应变计算的alpha参数
-            residue_range=residue_range, # 分析的残基范围
-            num_rounds=num_rounds, # 平均的轮次数
-            verbose=verbose       # 显示进度信息
+            data_path,            # Base data directory
+            mutant,               # Mutant name
+            alpha=alpha,          # Alpha parameter for strain calculation
+            residue_range=residue_range, # Range of residues to analyze
+            num_rounds=num_rounds, # Number of rounds to average
+            verbose=verbose       # Show progress information
         )
         
-        # 计算突变熵
+        # Calculate Mutation Entropy
         mutant_ME = MutationEntropy.calculate_ME(mutant_avg_S_values, wt_avg_S_values)
         
-        # 如果需要就绘制结果
+        # Plot results if requested
         if plot_results
-            println("为 $mutant 绘制图表...")
+            println("Creating plot for $mutant...")
             fig = MutationEntropy.plot_MEvsDist(mutant_ME, data_path, mutant)
             
-            # 创建figs目录（如果不存在）
+            # Create figs directory if it doesn't exist
             mkpath("figs")
             
-            # 保存图表
+            # Save plot
             save_path = joinpath("figs", "ME_$(mutant)_alpha_$(alpha).png")
             save(save_path, fig)
-            println("已保存图表到: $save_path")
+            println("Plot saved to: $save_path")
         end
     end
     
-    println("已完成所有突变体的测试，alpha = $alpha")
+    println("Completed testing all mutants with alpha = $alpha")
 end
 
-# 示例: 测试多个突变体
-# 定义要测试的突变体列表
+# Example: Test multiple mutants
+# Define the list of mutations to test
 mutations = ["a140e", "a140g", "a140v", "a142c", "a142f", "a142g", "a142v", "a151g", "a151t", "a151v"]
-# 设置alpha值
+# Set alpha value
 alpha = 1.0
-# 运行测试
+# Run the test
 test_mutants_with_alpha(mutations, "data", alpha)

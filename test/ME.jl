@@ -46,32 +46,41 @@ wt_pae = MutationEntropy.read_paes("data", "thermonulease", 1)
 using MutationEntropy
 ## Test the different alpha values
 data_path = "data"
-mutant = "a140e"
+mutant = "l120e"
 
 actual_range = 83:231
 alpha = 2.0
 
-# Use the new collect_strains function to calculate average strain values
+# Use the collect_strains function to calculate average strain values
 # for the range of residues (actual_range) over 20 rounds
+# Low pLDDT residues are automatically excluded (default behavior)
 wt_avg_S_values = MutationEntropy.collect_strains(
     data_path,                # Base directory for data
     "thermonulease",          # Protein name
     alpha=alpha,                # Alpha parameter for strain calculation
     residue_range=actual_range, # Range of residues to analyze
     num_rounds=20,            # Number of rounds to average
-    verbose=true              # Print progress information
+    verbose=false,              # Print progress information
+    cache=true,
+    plddt_threshold=90.0      # pLDDT threshold below which residues are excluded
 )
 
 mutant_avg_S_values = MutationEntropy.collect_strains(
-    data_path,                # Base directory for data
-    mutant,                  # Mutation name
-    alpha=alpha,                # Alpha parameter for strain calculation
-    residue_range=actual_range, # Range of residues to analyze
-    num_rounds=20,            # Number of rounds to average
-    verbose=true              # Print progress information
+    data_path,
+    mutant,
+    alpha=alpha,
+    residue_range=actual_range,
+    num_rounds=20,
+    verbose=false,
+    cache=true,
+    plddt_threshold=90.0      # pLDDT threshold below which residues are excluded
 )
 
 mutant_ME = MutationEntropy.calculate_ME(mutant_avg_S_values, wt_avg_S_values)
 
 # Plot ME vs Distance using the CairoMakie implementation
 fig = MutationEntropy.plot_MEvsDist(mutant_ME, data_path, mutant)
+
+# Get low pLDDT residues for information only
+plddt = MutationEntropy.get_low_plddt_residues(mutant, 1, data_path)
+println("Low confidence residues excluded from strain calculation: ", length(plddt), " residues")

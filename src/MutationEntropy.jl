@@ -13,7 +13,6 @@ using Distributed
 export read_coordinates, read_xvg, plot_msf, calculate_ddgs
 
 include("entropy.jl")
-include("visualization.jl")
 include("ddg.jl")
 include("mutation_effect.jl")
 include("plot_functions.jl")

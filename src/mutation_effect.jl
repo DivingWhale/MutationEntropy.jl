@@ -285,7 +285,6 @@ function get_low_plddt_residues(mutation::String, round::Int, datadir::String; t
     # Identify residues below threshold
     low_plddt_residues = [res_id for (res_id, plddt) in residue_plddts if plddt < threshold]
     
-    println("Found $(length(low_plddt_residues)) residues with pLDDT < $threshold for $mutation round $round")
     return sort(low_plddt_residues)
 end
 
@@ -380,9 +379,12 @@ end
                     alpha::Float64=2.0, 
                     residue_range=nothing, 
                     num_rounds::Int=20, 
-                    verbose::Bool=true)
+                    verbose::Bool=true,
+                    cache::Bool=true,
+                    plddt_threshold::Float64=90.0)
 
 Collect and average strain values for multiple residues across multiple rounds.
+Low pLDDT residues are automatically excluded from calculations by default.
 
 # Arguments
 - `datadir::String`: Base directory containing protein data
@@ -391,6 +393,8 @@ Collect and average strain values for multiple residues across multiple rounds.
 - `residue_range=nothing`: Range of residues to analyze (e.g., 83:231), if nothing analyzes all residues
 - `num_rounds::Int=20`: Number of rounds to average over
 - `verbose::Bool=true`: Whether to print progress information
+- `cache::Bool=true`: Whether to cache distance maps and PAE matrices
+- `plddt_threshold::Float64=90.0`: pLDDT threshold below which residues are considered low confidence
 
 # Returns
 - `Dict{Int, Float64}`: Dictionary mapping residue IDs to their averaged strain values
@@ -399,7 +403,9 @@ function collect_strains(datadir::String, protein::String;
                          alpha::Float64=2.0, 
                          residue_range=nothing, 
                          num_rounds::Int=20,
-                         verbose::Bool=true)
+                         verbose::Bool=true,
+                         cache::Bool=true,
+                         plddt_threshold::Float64=90.0)
     
     # Determine residue range if not provided
     if residue_range === nothing
@@ -411,22 +417,128 @@ function collect_strains(datadir::String, protein::String;
         end
     end
     
+    # Filter out low pLDDT residues (now default behavior)
+    try
+        low_plddt_residues = get_low_plddt_residues(protein, 1, datadir, threshold=plddt_threshold)
+        if !isempty(low_plddt_residues)
+            # Create a new range excluding low pLDDT residues
+            filtered_residue_range = filter(r -> !(r in low_plddt_residues), residue_range)
+            
+            if verbose
+                excluded_count = length(residue_range) - length(filtered_residue_range)
+                println("Excluded $excluded_count residues with pLDDT < $plddt_threshold")
+            end
+            
+            residue_range = filtered_residue_range
+        end
+    catch e
+        @warn "Failed to filter low pLDDT residues: $e"
+    end
+    
+    # Create cache directory if needed
+    cache_dir = joinpath(datadir, "strain_cache")
+    if cache && !isdir(cache_dir)
+        mkpath(cache_dir)
+    end
+    
     # Initialize a dictionary with keys from the residue range
     site_value_sums = Dict(k => 0.0 for k in residue_range)
     
+    # Pre-compute nearby residues for each site (this avoids redundant calculations)
+    nearby_residues_cache = Dict{Int, Vector{Int}}()
+    
+    # Process rounds
+    function process_round(r)
+        local_results = Dict(k => 0.0 for k in residue_range)
+        
+        # Check cache first
+        # Include information about pLDDT filtering in the cache file name
+        plddt_suffix = "_plddt$(plddt_threshold)"
+        cache_file = joinpath(cache_dir, "$(protein)_round$(r)_alpha$(alpha)$(plddt_suffix).jld2")
+        
+        if cache && isfile(cache_file)
+            if verbose
+                println("Loading cached data for round $r")
+            end
+            try
+                local_results = load(cache_file, "strain_data")
+                return local_results
+            catch e
+                @warn "Failed to load cached data for round $r: $e. Recomputing..."
+            end
+        end
+        
+        try
+            # Get distance map and PAE matrix for this round
+            dists = get_dist_map(datadir, protein, r)
+            paes = read_pae(datadir, protein, r)
+            
+            # Calculate strain for each site in the range
+            for site in residue_range
+                # Get or compute nearby residues
+                if !haskey(nearby_residues_cache, site)
+                    nearby_residues_cache[site] = find_residues_within_distance(site, dists)
+                end
+                
+                nearby = nearby_residues_cache[site]
+                strain_sum = 0.0
+                valid_count = 0
+                
+                # Calculate strain for this site
+                for residue in nearby
+                    if residue == site
+                        continue
+                    end
+                    
+                    # Ensure we're within bounds
+                    if site <= size(paes, 1) && residue <= size(paes, 2) && 
+                       site <= size(dists, 1) && residue <= size(dists, 2)
+                        strain_sum += paes[site, residue] / (dists[site, residue]^alpha)
+                        valid_count += 1
+                    end
+                end
+                
+                # Avoid division by zero
+                if valid_count > 0
+                    local_results[site] = strain_sum / valid_count
+                else
+                    local_results[site] = 0.0
+                    @warn "No valid neighbors found for site $site in round $r"
+                end
+            end
+            
+            # Cache the results
+            if cache
+                try
+                    jldsave(cache_file; strain_data=local_results)
+                catch e
+                    @warn "Failed to cache results for round $r: $e"
+                end
+            end
+            
+            if verbose
+                println("Completed round $r")
+            end
+            
+            return local_results
+            
+        catch e
+            @error "Failed to process round $r: $e"
+            return Dict(k => 0.0 for k in residue_range)  # Return zeros on error
+        end
+    end
+    
+    # Process rounds sequentially
     for r in 1:num_rounds
         if verbose
             println("Processing round $r of $num_rounds...")
         end
         
-        # Get distance map and PAE matrix for this round
-        dists = get_dist_map(datadir, protein, r)
-        paes = read_pae(datadir, protein, r)
+        r_results = process_round(r)
         
-        # Calculate strain for each site in the range
-        for site in residue_range
-            strain = calculate_strain(alpha, paes, dists, site)
-            site_value_sums[site] += strain
+        # Aggregate results
+        for (site, value) in r_results
+            site_value_sums[site] += value
         end
     end
     
@@ -440,7 +552,11 @@ function collect_strains(datadir::String, protein::String;
         end
     end
     
+    # No save functionality
+    
+    # Report results
     if verbose
+        println("\nProcessing completed")
         println("\nFinal Averaged Values per Site:")
         for (site, avg_value) in sort(collect(final_averaged_values))
             println("Site $site: $avg_value")
@@ -451,15 +567,24 @@ function collect_strains(datadir::String, protein::String;
 end
 
 function calculate_ME(Strain::Dict{Int, Float64}, Strain_wt::Dict{Int, Float64})
-    # Check if dictionaries have the same keys
-    if keys(Strain) != keys(Strain_wt)
-        error("Strain and Strain_wt dictionaries must have the same keys")
+    # Find the intersection of keys - residues present in both dictionaries
+    common_sites = intersect(keys(Strain), keys(Strain_wt))
+    
+    if isempty(common_sites)
+        error("No common residue sites found between the two strain dictionaries")
     end
-
-    # Calculate the Mutation Entropy (ME) as the sum of differences
+    
+    # Calculate the Mutation Entropy (ME) as the sum of differences for common sites
     ME = Dict{Int, Float64}()
-    for site in keys(Strain)
+    for site in common_sites
         ME[site] = abs(Strain[site] - Strain_wt[site])
+    end
+    
+    # Log information about the intersection
+    missing_count = length(keys(Strain)) + length(keys(Strain_wt)) - 2*length(common_sites)
+    if missing_count > 0
+        @info "$(missing_count) residue sites were excluded from ME calculation due to missing in either strain dataset"
+        @info "Calculated ME for $(length(common_sites)) common residue sites"
     end
     
     return ME
