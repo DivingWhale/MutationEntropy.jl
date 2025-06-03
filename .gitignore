@@ -2,3 +2,5 @@ Manifest.toml
 .vscode/
 data/
 figs/
+test/submit_test.sh
+test/slogs
