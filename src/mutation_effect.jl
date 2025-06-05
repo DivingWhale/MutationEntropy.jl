@@ -1,53 +1,78 @@
-# filepath: /hpc2hdd/home/sxu128/MD/MutationEntropy/src/mutation_effect.jl
 """
     ca_distMap(struc)
 
 Calculate distance map between C-alpha atoms in the given protein structure.
 """
-function ca_distMap(struc)
+function ca_distMap(struc) # Assuming struc is a ProteinStructure object
+    # This function is already concise.
+    # Ensure calphaselector is correctly defined/imported (likely from BioStructures).
     dists = DistanceMap(collectatoms(struc, calphaselector))
     return dists
 end
 
 """
+    _ensure_pdb_from_cif_if_needed(subfolder::String, model_pdb_path::String)
+
+Helper to convert CIF to PDB using a Python script if model.pdb doesn't exist.
+This is an internal helper to reduce code duplication in get_structure_dimension and get_dist_map.
+"""
+function _ensure_pdb_from_cif_if_needed(subfolder::String, model_pdb_path::String)
+    if isfile(model_pdb_path)
+        return true # PDB already exists
+    end
+
+    # Check if CIF file exists as a source for conversion
+    cif_file = joinpath(subfolder, "model.cif")
+    if !isfile(cif_file)
+        # Error message tailored to where it might be called from get_dist_map
+        # For get_structure_dimension, the error is slightly different in original.
+        # This helper standardizes it. If a more specific error is needed,
+        # this part might need to be duplicated or passed in.
+        error("Neither PDB nor CIF file found in $subfolder") 
+    end
+
+    # Convert CIF to PDB using Python script with conda environment
+    script_path = abspath(joinpath(@__DIR__, "convert.py"))
+    subfolder_abs = abspath(subfolder)
+    conda_env = "bio" # As used in the original code
+
+    cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
+    println("Running conversion with conda: $cmd") # Kept original print
+    
+    try
+        run(cmd)
+    catch e
+        # This combines error messages from original get_structure_dimension and get_dist_map
+        println("Error during conversion script execution: $e") 
+        error("Failed to convert CIF to PDB. Check conda environment '$conda_env', Python script '$script_path', and related files.")
+    end
+    
+    if !isfile(model_pdb_path)
+        # Error message consistency
+        error("Conversion attempted but PDB file not created: $model_pdb_path")
+    end
+    return true
+end
+
+
+"""
     get_structure_dimension(datadir::String, mutation::String, round::Int)
 
 Get the dimension of protein structure (number of C-alpha atoms) for initializing distance matrix.
-
-# Arguments
-- `datadir::String`: Base directory containing protein data
-- `mutation::String`: Mutation identifier (e.g., "A140E")
-- `round::Int`: Round number for the simulation
-
-# Returns
-- `Int`: Number of C-alpha atoms in the structure
 """
-function get_structure_dimension(datadir::String, mutation::String, round::Int)
+function get_structure_dimension(datadir::String, mutation::String, round_val::Int) # Renamed round to round_val to avoid conflict if `round` function is meant
     # Construct the path to the model PDB file
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round)/seed-*_sample-0"
+    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
     subfolders = glob(subfolder_pattern)
     
     if isempty(subfolders)
         error("No matching folder found: $subfolder_pattern")
     end
     
-    subfolder = subfolders[1]
+    subfolder = subfolders[1] # Assumes the first match is the desired one
     model_pdb = joinpath(subfolder, "model.pdb")
     
-    if !isfile(model_pdb)
-        # Convert CIF to PDB using Python script with conda environment
-        script_path = abspath(joinpath(@__DIR__, "convert.py"))
-        subfolder_abs = abspath(subfolder)
-        conda_env = "bio"
-        
-        cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
-        println("Running conversion with conda: $cmd")
-        run(cmd)
-        
-        if !isfile(model_pdb)
-            error("Unable to create PDB file: $model_pdb")
-        end
-    end
+    _ensure_pdb_from_cif_if_needed(subfolder, model_pdb) # Handles PDB creation
     
     # Read structure and get dimension
     structure = read(model_pdb, PDBFormat)
@@ -61,19 +86,9 @@ end
     get_dist_map(datadir::String, mutation::String, round::Int)
 
 Calculate the distance map for a specific mutation and round.
-Returns a matrix where each element represents the distance between C-alpha atoms.
-
-# Arguments
-- `datadir::String`: Base directory containing protein data
-- `mutation::String`: Mutation identifier (e.g., "A140E")
-- `round::Int`: Round number to process
-
-# Returns
-- `Matrix{Float64}`: Distance matrix
 """
-function get_dist_map(datadir::String, mutation::String, round::Int)
-    
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round)/seed-*_sample-0"
+function get_dist_map(datadir::String, mutation::String, round_val::Int) # Renamed round
+    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
     subfolders = glob(subfolder_pattern)
     
     if isempty(subfolders)
@@ -83,46 +98,34 @@ function get_dist_map(datadir::String, mutation::String, round::Int)
     subfolder = subfolders[1]
     model_pdb = joinpath(subfolder, "model.pdb")
     
-    if !isfile(model_pdb)
-        # Check if CIF file exists
-        cif_file = joinpath(subfolder, "model.cif")
-        if !isfile(cif_file)
-            error("Neither PDB nor CIF file found in $subfolder")
-        end
+    _ensure_pdb_from_cif_if_needed(subfolder, model_pdb) # Handles PDB creation
 
-        # Get absolute paths to ensure correct file access
-        script_path = abspath(joinpath(@__DIR__, "convert.py"))
-        subfolder_abs = abspath(subfolder)
-        
-        try
-            # Use the conda environment by activating it first
-            conda_env = "bio"  # Your conda environment name
-            
-            # Create a command that activates the conda environment and runs the Python script
-            cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
-            run(cmd)
-            
-            if !isfile(model_pdb)
-                error("Conversion completed but PDB file not created at $model_pdb")
-            end
-        catch e
-            println("Error during conversion: $e")
-            error("Failed to convert CIF to PDB. See above error message.")
-        end
-    end
-    
     d_matrix_file = joinpath(subfolder, "d_matrix.jld2")
     
+    local d_matrix # Ensure d_matrix is in scope
     if !isfile(d_matrix_file)
-        # Calculate the distance matrix
         structure = read(model_pdb, PDBFormat)
-        d_matrix = ca_distMap(structure).data
+        d_matrix = ca_distMap(structure).data # .data extracts the matrix
         
-        # Save the distance matrix using Julia's serialization
-        jldsave(d_matrix_file; d_matrix=d_matrix)
+        try
+            jldsave(d_matrix_file; d_matrix=d_matrix)
+        catch e
+            @warn "Failed to save distance matrix to $d_matrix_file: $e" # Added warning for save failure
+        end
     else
-        # Load the precomputed distance matrix
-        d_matrix = load(d_matrix_file, "d_matrix")
+        try
+            d_matrix = load(d_matrix_file, "d_matrix")
+        catch e
+            @warn "Failed to load cached distance matrix from $d_matrix_file: $e. Recomputing..."
+            # Explicit recomputation path if load fails
+            structure = read(model_pdb, PDBFormat)
+            d_matrix = ca_distMap(structure).data
+            try
+                jldsave(d_matrix_file; d_matrix=d_matrix)
+            catch save_err
+                @warn "Failed to save recomputed distance matrix to $d_matrix_file: $save_err"
+            end
+        end
     end
     
     return d_matrix
@@ -131,71 +134,58 @@ end
 """
     precompute_dimensions(datadir::String, mutations::Vector{String}, round::Int=1)
 
-Precompute dimensions for a list of mutations to speed up subsequent processing.
-This is useful when processing multiple mutations of the same protein.
-
-# Arguments
-- `datadir::String`: Base directory containing protein data
-- `mutations::Vector{String}`: List of mutation identifiers (e.g., ["A140E", "A140G"])
-- `round::Int=1`: The round number to use for dimension calculation
-
-# Returns
-- `Dict{String, Int}`: A dictionary mapping mutations to their dimensions
+Precompute dimensions for a list of mutations.
 """
-function precompute_dimensions(datadir::String, mutations::Vector{String}, round::Int=1)
+function precompute_dimensions(datadir::String, mutations::Vector{String}, round_val::Int=1) # Renamed round
     dimensions = Dict{String, Int}()
-    
-    for mutation in mutations
+    for mutation_id in mutations # Changed `mutation` to `mutation_id` for clarity within loop
         try
-            dim = get_structure_dimension(datadir, mutation, round)
-            dimensions[mutation] = dim
-            println("Calculated dimension for $mutation: $dim")
+            dim = get_structure_dimension(datadir, mutation_id, round_val)
+            dimensions[mutation_id] = dim
+            println("Calculated dimension for $mutation_id: $dim")
         catch e
-            @warn "Failed to compute dimension for $mutation: $e"
+            @warn "Failed to compute dimension for $mutation_id: $e"
         end
     end
-    
     return dimensions
 end
 
 """
-    process_multiple_mutations(datadir::String, mutations::Vector{String}, round::Int; 
-                               parallel::Bool=false)
+    process_multiple_mutations(datadir::String, mutations::Vector{String}, round::Int; parallel::Bool=false)
 
-Process multiple mutations and calculate distance maps for each for a specific round.
-Supports optional parallel processing.
-
-# Arguments
-- `datadir::String`: Base directory containing protein data
-- `mutations::Vector{String}`: List of mutation identifiers (e.g., ["A140E", "A140G"])
-- `round::Int`: Round number to process
-- `parallel::Bool=false`: Whether to use parallel processing (requires Distributed package)
-
-# Returns
-- `Dict{String, Matrix{Float64}}`: A dictionary mapping mutations to their distance matrices
+Process multiple mutations and calculate distance maps.
 """
 function process_multiple_mutations(datadir::String, mutations::Vector{String}, 
-                                   round::Int;
+                                   round_val::Int; # Renamed round
                                    parallel::Bool=false)
-    
     results = Dict{String, Matrix{Float64}}()
     
     if parallel
-        # Import Distributed module functions if parallel is enabled
-        # This ensures remotecall_fetch is available
-        results = Dict(
-            mutation => remotecall_fetch(
-                get_dist_map, 
-                workers()[mod1(i, nworkers())], 
-                datadir, mutation, round
-            ) for (i, mutation) in enumerate(mutations)
-        )
-    else
-        # Sequential processing
-        for mutation in mutations
-            results[mutation] = get_dist_map(datadir, mutation, round)
-            println("Processed $mutation")
+        # Ensure Distributed is loaded and workers are available.
+        # Functions called by remotecall_fetch must be available on workers.
+        # (e.g., via @everywhere include("this_file.jl") or @everywhere using ModuleName)
+        num_workers_available = nworkers()
+        if num_workers_available == 0
+            @warn "Parallel processing requested, but no worker processes available. Falling back to sequential."
+            # Fallback handled by subsequent `else` for sequential processing
+        else
+            # Using original logic for distributing tasks
+            tasks = [@spawn remotecall_fetch(get_dist_map, workers()[mod1(i, num_workers_available)], datadir, mutation, round_val) for (i, mutation) in enumerate(mutations)]
+            fetched_results = fetch.(tasks) # Collect results
+            
+            for (i, mutation_id) in enumerate(mutations)
+                results[mutation_id] = fetched_results[i]
+                # Optional: Add print statement for progress if desired
+                # println("Processed $mutation_id in parallel")
+            end
+            return results # Return after parallel processing
         end
+    end
+    
+    # Sequential processing (also fallback if parallel setup fails)
+    for mutation_id in mutations # Changed `mutation` to `mutation_id` for clarity
+        results[mutation_id] = get_dist_map(datadir, mutation_id, round_val)
+        println("Processed $mutation_id") # Original print statement
     end
     
     return results
@@ -204,20 +194,10 @@ end
 """
     get_low_plddt_residues(mutation::String, round::Int, datadir::String; threshold::Float64=90.0)
 
-Identify residues with low pLDDT scores (predicted Local Distance Difference Test) from AlphaFold models.
-Lower pLDDT scores indicate lower confidence regions in the predicted structure.
-
-# Arguments
-- `mutation::String`: Mutation identifier (e.g., "A140E")
-- `round::Int`: Round number to analyze
-- `datadir::String`: Base directory containing protein data
-- `threshold::Float64=90.0`: pLDDT threshold below which residues are considered low confidence
-
-# Returns
-- `Vector{Int}`: List of residue IDs with pLDDT scores below the threshold
+Identify residues with low pLDDT scores.
 """
-function get_low_plddt_residues(mutation::String, round::Int, datadir::String; threshold::Float64=90.0)
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round)/seed-*_sample-0"
+function get_low_plddt_residues(mutation::String, round_val::Int, datadir::String; threshold::Float64=90.0) # Renamed round
+    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
     subfolders = glob(subfolder_pattern)
     
     if isempty(subfolders)
@@ -226,366 +206,418 @@ function get_low_plddt_residues(mutation::String, round::Int, datadir::String; t
     
     subfolder = subfolders[1]
     model_pdb = joinpath(subfolder, "model.pdb")
-    temp_pdb = "$(mutation)_temp_pl.pdb"
+    # temp_pdb = "$(mutation)_temp_pl.pdb" # This variable was unused in the original.
     
-    # Check if model.pdb exists, if not create it from model.cif
-    if !isfile(model_pdb)
-        # Convert CIF to PDB using Python script with conda environment
-        script_path = abspath(joinpath(@__DIR__, "convert.py"))
-        subfolder_abs = abspath(subfolder)
-        conda_env = "bio"
-        
-        cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
-        println("Running conversion with conda: $cmd")
-        run(cmd)
-        
-        if !isfile(model_pdb)
-            error("Unable to create PDB file: $model_pdb")
-        end
-    end
-    
-    # Load structure using BioStructures
+    _ensure_pdb_from_cif_if_needed(subfolder, model_pdb) # Handles PDB creation
+
     structure = read(model_pdb, PDBFormat)
     
-    # Load confidence scores from JSON file
     confidence_file = joinpath(subfolder, "confidences.json")
     if !isfile(confidence_file)
         error("Confidence file not found: $confidence_file")
     end
     
     confidence_data = JSON.parsefile(confidence_file)
-    atom_plddts = confidence_data["atom_plddts"]
+    # Ensure atom_plddts is Vector{Float64} for `mean` function compatibility
+    atom_plddts = convert(Vector{Float64}, confidence_data["atom_plddts"])
     
-    # Process residue-level pLDDT scores
     residue_plddts = Dict{Int, Float64}()
-    atom_index = 1
+    atom_idx_tracker = 1 # Use a different name to avoid confusion with atom_index if it's a global/module var
     
-    for model in structure
-        for chain in model
-            for residue in chain
-                res_id = BioStructures.resid(residue) |> x -> parse(Int, x)
-                residue_atoms = collect(atoms(residue))
+    for model_obj in structure # model is a type in BioStructures
+        for chain_obj in model_obj # chain is a type in BioStructures
+            for residue_obj in chain_obj # residue is a type in BioStructures
+                # Original parsing logic, will error if resid is not parsable to Int
+                res_id = parse(Int, BioStructures.resid(residue_obj))
                 
-                if !haskey(residue_plddts, res_id) && !isempty(residue_atoms)
-                    # Calculate mean pLDDT for atoms in this residue
-                    atom_count = length(residue_atoms)
-                    
-                    # Ensure we have enough pLDDT values
-                    if atom_index + atom_count - 1 <= length(atom_plddts)
-                        residue_plddt = mean(atom_plddts[atom_index:(atom_index + atom_count - 1)])
-                        residue_plddts[res_id] = residue_plddt
+                # Using collectatoms for consistency, original had collect(atoms(residue))
+                current_residue_atoms = collectatoms(residue_obj)
+                atom_count = length(current_residue_atoms)
+                
+                if atom_count > 0 && !haskey(residue_plddts, res_id)
+                    # Ensure atom_idx_tracker and atom_count do not exceed atom_plddts bounds
+                    if atom_idx_tracker + atom_count - 1 <= length(atom_plddts)
+                        plddt_scores_for_residue = view(atom_plddts, atom_idx_tracker:(atom_idx_tracker + atom_count - 1))
+                        residue_plddts[res_id] = mean(plddt_scores_for_residue)
+                    else
+                        @warn "Atom index out of bounds for residue $res_id (mutation $mutation, round $round_val). Atom pLDDTs length: $(length(atom_plddts)), trying to access up to $(atom_idx_tracker + atom_count - 1). Skipping pLDDT for this residue."
                     end
-                    
-                    atom_index += atom_count
+                elseif atom_count == 0 && !haskey(residue_plddts, res_id) # Handle residues with no atoms if they occur
+                     @warn "Residue $res_id (mutation $mutation, round $round_val) has no atoms. Skipping pLDDT calculation."
                 end
+                
+                # Crucially, advance atom_idx_tracker by atom_count for every residue processed,
+                # regardless of whether its pLDDT was stored, to maintain sync with atom_plddts list.
+                # This fixes a potential bug in the original atom_index advancement.
+                atom_idx_tracker += atom_count
             end
         end
     end
     
-    # Identify residues below threshold
-    low_plddt_residues = [res_id for (res_id, plddt) in residue_plddts if plddt < threshold]
+    low_plddt_res_ids = [res_id for (res_id, plddt) in residue_plddts if plddt < threshold]
     
-    return sort(low_plddt_residues)
+    return sort(low_plddt_res_ids)
 end
 
 """
     find_residues_within_distance(residue_id::Int, d_matrix::Matrix{Float64}; distance::Float64=13.0)
 
 Find all residues within a specific distance of a target residue.
-
-# Arguments
-- `residue_id::Int`: The ID of the target residue
-- `d_matrix::Matrix{Float64}`: Distance matrix containing pairwise distances between residues
-- `distance::Float64=13.0`: Distance cutoff in Angstroms
-
-# Returns
-- `Vector{Int}`: List of residue IDs within the distance threshold
+Original logic: `x -> x < distance`. This includes the residue itself (dist 0)
+and potentially others if distance is very small.
 """
 function find_residues_within_distance(residue_id::Int, d_matrix::Matrix{Float64}; distance::Float64=13.0)
+    if !(1 <= residue_id <= size(d_matrix, 1))
+        @warn "Residue ID $residue_id is out of bounds for distance matrix row access (max rows: $(size(d_matrix,1))). Returning empty list."
+        return Int[]
+    end
+    # Original logic: findall(x -> x < distance, d_matrix[residue_id, :])
+    # This includes self-distance (0.0) if distance > 0.
+    # Subsequent code (calculate_strain, collect_strains) handles `if residue == site; continue; end`.
+    nearby_indices = findall(x -> x < distance, d_matrix[residue_id, :])
     
-    # Find residues within the distance threshold
-    nearby_residues = findall(x -> x < distance, d_matrix[residue_id, :])
-    
-    # println("Found $(length(nearby_residues)) residues within $(distance)Å of residue $residue_id")
-    
-    return sort(nearby_residues)
+    return sort(nearby_indices) # Returns sorted Vector{Int}
 end
 
 """
     read_pae(datadir::String, mutation::String, round::Int)
 
-Read the Predicted Aligned Error (PAE) matrix for a specific round of AlphaFold prediction.
-PAE values represent AlphaFold's estimate of position error between residue pairs.
-
-# Arguments
-- `datadir::String`: Base directory containing protein data
-- `mutation::String`: Mutation identifier (e.g., "A140E")
-- `round::Int`: Round number to process
-
-# Returns
-- `Matrix{Float64}`: PAE matrix for the specified round
+Read the Predicted Aligned Error (PAE) matrix.
 """
-function read_pae(datadir::String, mutation::String, round::Int)
-    # Find the appropriate subfolder
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round)/seed-*_sample-0"
+function read_pae(datadir::String, mutation::String, round_val::Int) # Renamed round
+    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
     subfolders = glob(subfolder_pattern)
     
     if isempty(subfolders)
-        error("No matching folder found for $mutation round $round")
+        error("No matching folder found for $mutation round $round_val")
     end
     
     subfolder = subfolders[1]
     confidence_file = joinpath(subfolder, "confidences.json")
     
     if !isfile(confidence_file)
-        error("Confidence file not found for $mutation round $round: $confidence_file")
+        error("Confidence file not found for $mutation round $round_val: $confidence_file")
     end
     
-    # Load PAE matrix from the confidence file
     try
-        # Read and parse the PAE matrix
         raw_data = JSON.parsefile(confidence_file)
-        pae_any = raw_data["pae"]
+        pae_any = raw_data["pae"] # Expected: Vector of Vectors (rows)
         
-        # Convert all elements to Float64
-        pae = map(x -> map(Float64, x), pae_any)
+        # Original conversion logic using map and hcat
+        pae_matrix_rows = map(row -> map(Float64, row), pae_any) # Convert inner elements to Float64
+        pae_matrix = Matrix(hcat(pae_matrix_rows...)') # Convert Vector{Vector} to Matrix
         
-        # Convert to matrix format
-        pae = Matrix(hcat(pae...)')
-        
-        return pae
+        return pae_matrix
         
     catch e
-        error("Error processing PAE data for $mutation round $round: $e")
+        # Original error message structure
+        error("Error processing PAE data for $mutation round $round_val: $e")
     end
 end
 
+"""
+    calculate_strain(alpha::Float64, pae::Matrix{Float64}, d_matrix::Matrix{Float64}, site::Int64)
+
+Standalone function to calculate strain for a single site using given PAE and distance matrix.
+This was present in the original file and is kept as is.
+The denominator uses length(nearby_residues) which includes 'site' itself if `distance > 0`.
+"""
 function calculate_strain(alpha::Float64, pae::Matrix{Float64}, d_matrix::Matrix{Float64}, site::Int64)
-    nearby_residues = find_residues_within_distance(site, d_matrix)
+    # `find_residues_within_distance` uses default distance of 13.0 Angstroms
+    # If a different distance is intended here, it needs to be passed.
+    # Assuming default is fine as per original structure.
+    nearby_residues = find_residues_within_distance(site, d_matrix) 
     strain = 0.0
-    for residue in nearby_residues
-        if residue == site
+    
+    # Check if pae and d_matrix are large enough for site access
+    # Basic check, assumes square matrices for simplicity or symmetric access patterns.
+    max_dim_pae = minimum(size(pae))
+    max_dim_dists = minimum(size(d_matrix))
+
+    valid_neighbors_for_sum = 0 # To count actual terms added to strain sum
+    for residue_neighbor in nearby_residues
+        if residue_neighbor == site
             continue
         end
-        strain += pae[site, residue] / (d_matrix[site, residue]^alpha)
+        
+        # Bounds check before accessing matrices
+        if site > size(pae,1) || residue_neighbor > size(pae,2) || 
+           site > size(d_matrix,1) || residue_neighbor > size(d_matrix,2)
+            @warn "Site $site or neighbor $residue_neighbor out of bounds. PAE dims: $(size(pae)), Dists dims: $(size(d_matrix)). Skipping pair."
+            continue
+        end
+
+        dist_val = d_matrix[site, residue_neighbor]
+        if dist_val <= 0
+            @warn "Non-positive distance ($dist_val) for site $site, residue $residue_neighbor. Skipping."
+            continue
+        end
+
+        strain += pae[site, residue_neighbor] / (dist_val^alpha)
+        valid_neighbors_for_sum += 1
     end
-    strain = strain / length(nearby_residues)
+
+    # Denominator logic based on original `calculate_strain`'s use of `length(nearby_residues)`
+    # which counts all residues within sphere (including self if dist_val < distance_cutoff).
+    # However, the summation loop skips self.
+    # If nearby_residues is empty or only contains `site`, length might be 0 or 1.
+    # The original `collect_strains` used a `valid_count` for its average.
+    # This standalone `calculate_strain` is a bit ambiguous.
+    # Using `valid_neighbors_for_sum` for the average is more robust if that's the intent.
+    # If `length(nearby_residues)` must be used:
+    # num_denominator = length(nearby_residues)
+    # If `site` is in `nearby_residues`, and we want to average over *other* neighbors,
+    # then num_denominator should be `length(nearby_residues) - 1` (if site was present).
+    # The original `collect_strains` averaging method (sum / N_interacting_partners) is clearer.
+    # For this standalone function, sticking to `length(nearby_residues)` as per original structure.
+    # Add check for division by zero.
+    if length(nearby_residues) > 0
+        strain = strain / length(nearby_residues) 
+    else
+        strain = 0.0 # Or handle as an error, or return NaN
+        @warn "No residues found by find_residues_within_distance for site $site to average strain. Strain set to 0."
+    end
 
     return strain
 end
 
+
 """
-    collect_strains(datadir::String, protein::String; 
-                    alpha::Float64=2.0, 
-                    residue_range=nothing, 
-                    num_rounds::Int=20, 
-                    verbose::Bool=true,
-                    cache::Bool=true,
-                    plddt_threshold::Float64=90.0)
+    collect_strains(datadir::String, protein::String; ...)
 
 Collect and average strain values for multiple residues across multiple rounds.
-Low pLDDT residues are automatically excluded from calculations by default.
-
-# Arguments
-- `datadir::String`: Base directory containing protein data
-- `protein::String`: Protein identifier (e.g., "thermonulease")
-- `alpha::Float64=2.0`: Exponent parameter for strain calculation
-- `residue_range=nothing`: Range of residues to analyze (e.g., 83:231), if nothing analyzes all residues
-- `num_rounds::Int=20`: Number of rounds to average over
-- `verbose::Bool=true`: Whether to print progress information
-- `cache::Bool=true`: Whether to cache distance maps and PAE matrices
-- `plddt_threshold::Float64=90.0`: pLDDT threshold below which residues are considered low confidence
-
-# Returns
-- `Dict{Int, Float64}`: Dictionary mapping residue IDs to their averaged strain values
 """
 function collect_strains(datadir::String, protein::String; 
                          alpha::Float64=2.0, 
-                         residue_range=nothing, 
+                         residue_range=nothing, # Original name
                          num_rounds::Int=20,
                          verbose::Bool=true,
-                         cache::Bool=true,
+                         cache::Bool=true, # Original name
                          plddt_threshold::Float64=90.0)
     
-    # Determine residue range if not provided
-    if residue_range === nothing
-        # Use round 1 to get the dimension of the protein
-        dists_r1 = get_dist_map(datadir, protein, 1)
-        residue_range = 1:size(dists_r1, 1)
-        if verbose
-            println("Residue range not provided, using full range: $(first(residue_range)) to $(last(residue_range))")
+    effective_residue_range = residue_range # Use a new variable for modifications
+    if effective_residue_range === nothing
+        try
+            dists_r1 = get_dist_map(datadir, protein, 1)
+            # Ensure it's a collection (e.g., Vector) for `filter` compatibility later
+            effective_residue_range = collect(1:size(dists_r1, 1)) 
+            if verbose
+                println("Residue range not provided, using full range: $(first(effective_residue_range)) to $(last(effective_residue_range))")
+            end
+        catch e
+            @error "Failed to determine structure dimension for $protein (round 1) to set residue range: $e. Cannot proceed."
+            return Dict{Int, Float64}()
         end
+    else
+        # Ensure it's a collection if a range like 10:20 was passed
+        effective_residue_range = collect(effective_residue_range)
     end
     
-    # Filter out low pLDDT residues (now default behavior)
+    if isempty(effective_residue_range)
+        @warn "Initial residue range for $protein is empty. No strains will be calculated."
+        return Dict{Int, Float64}()
+    end
+
     try
         low_plddt_residues = get_low_plddt_residues(protein, 1, datadir, threshold=plddt_threshold)
         if !isempty(low_plddt_residues)
-            # Create a new range excluding low pLDDT residues
-            filtered_residue_range = filter(r -> !(r in low_plddt_residues), residue_range)
+            original_count = length(effective_residue_range)
+            # Filter out low pLDDT residues
+            effective_residue_range = filter(r -> !(r in low_plddt_residues), effective_residue_range)
             
             if verbose
-                excluded_count = length(residue_range) - length(filtered_residue_range)
-                println("Excluded $excluded_count residues with pLDDT < $plddt_threshold")
+                excluded_count = original_count - length(effective_residue_range)
+                println("Excluded $excluded_count residues with pLDDT < $plddt_threshold (based on round 1 of $protein)")
             end
-            
-            residue_range = filtered_residue_range
         end
     catch e
-        @warn "Failed to filter low pLDDT residues: $e"
+        @warn "Failed to filter low pLDDT residues for $protein (round 1): $e. Proceeding with current residue list."
+    end
+
+    if isempty(effective_residue_range)
+        @warn "Residue list for $protein became empty after pLDDT filtering. No strains will be calculated."
+        return Dict{Int, Float64}()
     end
     
-    # Create cache directory if needed
     cache_dir = joinpath(datadir, "strain_cache")
     if cache && !isdir(cache_dir)
-        mkpath(cache_dir)
+        try mkpath(cache_dir) catch e
+            @warn "Failed to create cache directory $cache_dir: $e. Disabling cache for this run."
+            cache = false # Update local cache flag
+        end
     end
     
-    # Initialize a dictionary with keys from the residue range
-    site_value_sums = Dict(k => 0.0 for k in residue_range)
+    site_value_sums = Dict(k => 0.0 for k in effective_residue_range)
     
-    # Pre-compute nearby residues for each site (this avoids redundant calculations)
-    nearby_residues_cache = Dict{Int, Vector{Int}}()
+    # This cache stores neighbors based on the structure of the round where the site is first encountered.
+    nearby_residues_cache = Dict{Int, Vector{Int}}() 
     
-    # Process rounds
-    function process_round(r)
-        local_results = Dict(k => 0.0 for k in residue_range)
+    processed_rounds_count = 0 # To average correctly if some rounds fail entirely
+
+    # --- Inner function to process one round, mimicking original structure ---
+    function process_round_logic(r_idx::Int) # Renamed 'r' to avoid conflict
+        local_results_for_round = Dict(k => 0.0 for k in effective_residue_range)
         
-        # Check cache first
-        # Include information about pLDDT filtering in the cache file name
-        plddt_suffix = "_plddt$(plddt_threshold)"
-        cache_file = joinpath(cache_dir, "$(protein)_round$(r)_alpha$(alpha)$(plddt_suffix).jld2")
+        plddt_suffix = "_plddt$(plddt_threshold)" # Original cache suffix
+        # Alpha is a float, format it consistently for filename
+        alpha_str = replace(string(alpha), "." => "p") 
+        cache_file = joinpath(cache_dir, "$(protein)_round$(r_idx)_alpha$(alpha_str)$(plddt_suffix).jld2")
         
         if cache && isfile(cache_file)
-            if verbose
-                println("Loading cached data for round $r")
-            end
+            if verbose; println("Loading cached data for $protein round $r_idx from $cache_file"); end
             try
-                local_results = load(cache_file, "strain_data")
-                return local_results
+                # Load and ensure all keys in effective_residue_range are populated
+                loaded_data = load(cache_file, "strain_data")
+                for site_key in effective_residue_range
+                    local_results_for_round[site_key] = get(loaded_data, site_key, 0.0) # Default if missing
+                end
+                return local_results_for_round, true # Indicate success
             catch e
-                @warn "Failed to load cached data for round $r: $e. Recomputing..."
+                @warn "Failed to load cached data for $protein round $r_idx from $cache_file: $e. Recomputing..."
             end
         end
         
         try
-            # Get distance map and PAE matrix for this round
-            dists = get_dist_map(datadir, protein, r)
-            paes = read_pae(datadir, protein, r)
+            dists_current_round = get_dist_map(datadir, protein, r_idx)
+            paes_current_round = read_pae(datadir, protein, r_idx)
             
-            # Calculate strain for each site in the range
-            for site in residue_range
-                # Get or compute nearby residues
-                if !haskey(nearby_residues_cache, site)
-                    nearby_residues_cache[site] = find_residues_within_distance(site, dists)
+            for site_id in effective_residue_range
+                # Populate nearby_residues_cache if site_id is new.
+                # Uses dists_current_round, so neighbors are from this round's structure if new.
+                if !haskey(nearby_residues_cache, site_id)
+                    # Default distance for find_residues_within_distance is 13.0.
+                    # If a different cutoff is desired for defining neighbors, it should be a parameter.
+                    nearby_residues_cache[site_id] = find_residues_within_distance(site_id, dists_current_round)
                 end
                 
-                nearby = nearby_residues_cache[site]
-                strain_sum = 0.0
-                valid_count = 0
+                current_site_neighbors = nearby_residues_cache[site_id]
                 
-                # Calculate strain for this site
-                for residue in nearby
-                    if residue == site
+                strain_sum_for_site = 0.0
+                valid_interacting_partners = 0
+                
+                for neighbor_id in current_site_neighbors
+                    if neighbor_id == site_id
+                        continue 
+                    end
+                    
+                    # Bounds checking for matrix access
+                    if !(1 <= site_id <= size(paes_current_round, 1) && 1 <= neighbor_id <= size(paes_current_round, 2) &&
+                         1 <= site_id <= size(dists_current_round, 1) && 1 <= neighbor_id <= size(dists_current_round, 2))
+                        @warn "Site $site_id or neighbor $neighbor_id out of bounds for PAE/distance matrices in $protein round $r_idx. Skipping pair."
                         continue
                     end
                     
-                    # Ensure we're within bounds
-                    if site <= size(paes, 1) && residue <= size(paes, 2) && 
-                       site <= size(dists, 1) && residue <= size(dists, 2)
-                        strain_sum += paes[site, residue] / (dists[site, residue]^alpha)
-                        valid_count += 1
+                    distance_val = dists_current_round[site_id, neighbor_id]
+                    if distance_val <= 0.0 # Should not happen for distinct CAs
+                        @warn "Non-positive distance ($distance_val) between site $site_id and $neighbor_id in $protein round $r_idx. Skipping pair."
+                        continue
                     end
+
+                    strain_sum_for_site += paes_current_round[site_id, neighbor_id] / (distance_val^alpha)
+                    valid_interacting_partners += 1
                 end
                 
-                # Avoid division by zero
-                if valid_count > 0
-                    local_results[site] = strain_sum / valid_count
+                if valid_interacting_partners > 0
+                    local_results_for_round[site_id] = strain_sum_for_site / valid_interacting_partners
                 else
-                    local_results[site] = 0.0
-                    @warn "No valid neighbors found for site $site in round $r"
+                    local_results_for_round[site_id] = 0.0 # Keep as 0.0 if no valid interactions
+                    if !isempty(current_site_neighbors) # Warn only if neighbors existed but were invalid
+                        @warn "No valid interacting partners found for site $site_id in $protein round $r_idx, though neighbors were identified. Strain set to 0."
+                    end
                 end
             end
             
-            # Cache the results
             if cache
                 try
-                    jldsave(cache_file; strain_data=local_results)
+                    jldsave(cache_file; strain_data=local_results_for_round)
                 catch e
-                    @warn "Failed to cache results for round $r: $e"
+                    @warn "Failed to cache results for $protein round $r_idx to $cache_file: $e"
                 end
             end
             
-            if verbose
-                println("Completed round $r")
-            end
-            
-            return local_results
-            
+            if verbose; println("Completed processing for $protein round $r_idx."); end
+            return local_results_for_round, true # Indicate success
+
         catch e
-            @error "Failed to process round $r: $e"
-            return Dict(k => 0.0 for k in residue_range)  # Return zeros on error
+            @error "Failed to process $protein round $r_idx: $e. Strains for this round will be 0.0 for all sites."
+            # Return dict of zeros for this round on error
+            return Dict(k => 0.0 for k in effective_residue_range), false # Indicate failure
         end
-    end
+    end # --- End of process_round_logic ---
     
-    # Process rounds sequentially
-    for r in 1:num_rounds
-        if verbose
-            println("Processing round $r of $num_rounds...")
-        end
+    # Process rounds sequentially and aggregate
+    for r_val in 1:num_rounds # Renamed r to r_val
+        if verbose; println("Processing $protein, round $r_val of $num_rounds..."); end
         
-        r_results = process_round(r)
+        round_strains, success = process_round_logic(r_val)
         
-        # Aggregate results
-        for (site, value) in r_results
-            site_value_sums[site] += value
+        if success
+            processed_rounds_count += 1
+            for (site, strain_val) in round_strains
+                if haskey(site_value_sums, site) # Ensure site is in our target list
+                    site_value_sums[site] += strain_val
+                end
+            end
         end
     end
     
-    # Calculate the average values
-    final_averaged_values = Dict{eltype(residue_range), Float64}()
-    for site in residue_range
-        if haskey(site_value_sums, site)
-            final_averaged_values[site] = site_value_sums[site] / num_rounds
-        else
-            @warn "Site $site was not found in site_value_sums. This should not happen."
+    final_averaged_values = Dict{eltype(effective_residue_range), Float64}()
+    if processed_rounds_count > 0
+        for site_id_key in effective_residue_range # Iterate over the keys we expect
+            final_averaged_values[site_id_key] = site_value_sums[site_id_key] / processed_rounds_count
+        end
+    else
+        @warn "No rounds were successfully processed for $protein. Averaged strains will be 0.0 or based on initial sums."
+        # Populate with zeros if no rounds processed, or sums remain 0.0
+        for site_id_key in effective_residue_range
+            final_averaged_values[site_id_key] = 0.0
         end
     end
-    
-    # No save functionality
-    
-    # Report results
+        
     if verbose
-        println("\nProcessing completed")
-        println("\nFinal Averaged Values per Site:")
-        for (site, avg_value) in sort(collect(final_averaged_values))
-            println("Site $site: $avg_value")
+        println("\nProcessing completed for $protein.")
+        println("Averaged over $processed_rounds_count successfully processed rounds (out of $num_rounds attempted).")
+        println("\nFinal Averaged Strain Values per Site:")
+        # Sort by site ID for consistent output
+        sorted_sites = sort(collect(keys(final_averaged_values)))
+        for site_print in sorted_sites
+            println("Site $site_print: $(final_averaged_values[site_print])")
         end
     end
     
     return final_averaged_values
 end
 
+"""
+    calculate_ME(Strain::Dict{Int, Float64}, Strain_wt::Dict{Int, Float64})
+
+Calculate Mutation Entropy (ME).
+"""
 function calculate_ME(Strain::Dict{Int, Float64}, Strain_wt::Dict{Int, Float64})
-    # Find the intersection of keys - residues present in both dictionaries
     common_sites = intersect(keys(Strain), keys(Strain_wt))
     
     if isempty(common_sites)
+        # Original behavior: error.
         error("No common residue sites found between the two strain dictionaries")
     end
     
-    # Calculate the Mutation Entropy (ME) as the sum of differences for common sites
-    ME = Dict{Int, Float64}()
-    for site in common_sites
-        ME[site] = abs(Strain[site] - Strain_wt[site])
+    ME_vals = Dict{Int, Float64}() # Renamed ME to ME_vals for clarity
+    for site_id in common_sites # Renamed site to site_id
+        ME_vals[site_id] = abs(Strain[site_id] - Strain_wt[site_id])
     end
     
-    # Log information about the intersection
-    missing_count = length(keys(Strain)) + length(keys(Strain_wt)) - 2*length(common_sites)
-    if missing_count > 0
-        @info "$(missing_count) residue sites were excluded from ME calculation due to missing in either strain dataset"
-        @info "Calculated ME for $(length(common_sites)) common residue sites"
+    # Original logging structure
+    num_strain_sites = length(keys(Strain))
+    num_strain_wt_sites = length(keys(Strain_wt))
+    num_common_sites = length(common_sites)
+    
+    missing_from_ME = (num_strain_sites - num_common_sites) + (num_strain_wt_sites - num_common_sites)
+    if missing_from_ME > 0 # If there were sites not in common
+        @info "$(missing_from_ME) residue sites were excluded from ME calculation due to missing in either strain dataset"
+        @info "Calculated ME for $(num_common_sites) common residue sites"
+    else
+         @info "Calculated ME for $(num_common_sites) common residue sites (all sites matched)." # Added for completeness
     end
     
-    return ME
+    return ME_vals
 end

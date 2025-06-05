@@ -1,4 +1,5 @@
 using CairoMakie
+using MutationEntropy
 
 """
     test_mutants_with_alpha(mutations, data_path, alpha, residue_range, num_rounds, verbose, plot_results)
