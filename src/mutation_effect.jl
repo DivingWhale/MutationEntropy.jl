@@ -37,7 +37,6 @@ function _ensure_pdb_from_cif_if_needed(subfolder::String, model_pdb_path::Strin
     conda_env = "bio" # As used in the original code
 
     cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
-    println("Running conversion with conda: $cmd") # Kept original print
     
     try
         run(cmd)
