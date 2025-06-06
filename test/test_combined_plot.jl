@@ -143,7 +143,7 @@ function plot_ME_density_heatmap(
     y_limit::Union{Float64, Nothing}=nothing
 )
     # Create a figure to hold the data
-    fig = Figure(size=(1500, 1000))
+    fig = Figure(size=(1500, 800))
     ax = Axis(fig[1, 1],
               title="Mutation Effect vs Distance for Multiple Variants (α=$alpha, n=$(length(mutations)))",
               xlabel="Distance from mutation site (Å)",
@@ -375,7 +375,7 @@ end
 # run_full_dataset_analysis("data", 1.0)
 
 # 2. Only plot from previously saved data (much faster)
-run_full_dataset_analysis("data", 3.0, plot_only=true)  # y_limit now auto-adapts to data
+run_full_dataset_analysis("data", 3.5, plot_only=true)  # y_limit now auto-adapts to data
 
 # 3. Run with a small set of mutations
 # run_combined_ME_analysis()
@@ -397,4 +397,4 @@ run_full_dataset_analysis("data", 3.0, plot_only=true)  # y_limit now auto-adapt
 # end
 
 # Run with all mutations and save the data
-# run_full_dataset_analysis("data", 2.5)
+# run_full_dataset_analysis("data", 3.5)

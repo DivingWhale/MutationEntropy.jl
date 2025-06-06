@@ -74,8 +74,8 @@ function plot_ME_vs_residue(ME::Dict{Int, Float64}, mutation::String; residue_ra
     min_dist = minimum(values(residue_distances); init=max_distance)
     
     # Define opacity range (0.2 to 0.8)
-    min_opacity = 0.2
-    max_opacity = 0.8
+    min_opacity = 0.3
+    max_opacity = 1.0
     
     # Highlight regions with residues within 13Å of the mutation site
     for residue in residues
@@ -87,10 +87,10 @@ function plot_ME_vs_residue(ME::Dict{Int, Float64}, mutation::String; residue_ra
             opacity = clamp(opacity, min_opacity, max_opacity)
             
             # Draw a vertical band to highlight these residues with distance-dependent opacity
-            vspan!(ax, residue-0.5, residue+0.5, color=("#F97A00", opacity))
+            vspan!(ax, residue-0.5, residue+0.5, color=("#FFBD69", opacity))
         end
     end
-    vspan!(ax, mutation_site-0.5, mutation_site+0.5, color=("#F97A00", 0.8))
+    vspan!(ax, mutation_site-0.5, mutation_site+0.5, color=("#FFBD69", 0.8))
     
     # Line plot of ME values
     lines!(ax, residues, me_values, 
