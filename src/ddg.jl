@@ -111,8 +111,11 @@ function read_ddGs(file_path::String)
         throw(ErrorException("The directory $file_path does not exist."))
     end
 
-    subDirs = filter(isdir, readdir(file_path, join=true))
-    subDirSorted = sort(subDirs, by=x -> parse(Int, match(r"\d+", x).match))
+    subDirs = filter(x -> isdir(x) && occursin(r"^[A-Z]\d+[A-Z]$", basename(x)), readdir(file_path, join=true))
+    subDirSorted = sort(subDirs, by=x -> begin
+    m = match(r"[A-Z](\d+)[A-Z]", basename(x))
+    m !== nothing ? parse(Int, m.captures[1]) : 0
+    end)
     ddGs = Dict{String, Float64}()
 
     for subDir in subDirSorted
