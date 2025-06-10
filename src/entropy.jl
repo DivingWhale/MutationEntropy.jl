@@ -85,11 +85,12 @@ function read_paes(task_file_path::String)
     return paes
 end
 
-function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64})
-    indices = findall(x -> isapprox(x, 0.0, atol=1e-6), Γ[position-87, :])
+function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, offset::Int64=0)
+    matrix_idx = position - offset
+    indices = findall(x -> isapprox(x, 0.0, atol=1e-6), Γ[matrix_idx, :])
     ΔΔS = 0.0
     for i in indices
-        ΔΔS += PAE_mut[position, i]^(2-rho) - PAE_wt[position, i]^(2-rho)
+        ΔΔS += PAE_mut[matrix_idx, i]^(2-rho) - PAE_wt[matrix_idx, i]^(2-rho)
     end
     ΔΔS = ΔΔS ./ length(indices)
     return ΔΔS
@@ -100,7 +101,7 @@ function ΔΔG_prime(A::Float64, ΔΔS::Float64, ΔΔG::Float64)
 end
 
 """
-    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64)
+    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0)
 
 Calculate the predicted ΔΔG values for a set of mutations.
 
@@ -113,20 +114,29 @@ Calculate the predicted ΔΔG values for a set of mutations.
 - `ddG_exp::DataFrame`: DataFrame containing experimental ddG values
 - `rho::Float64`: Parameter controlling contribution of PAE differences
 - `A::Float64`: Scaling parameter for entropy contribution
+- `offset::Int64`: Offset between protein position numbers and matrix indices (default: 0)
 
 # Returns
 - `filtered_ddG_exp::Vector{Float64}`: Filtered experimental ddG values
 - `ΔΔGs::Vector{Float64}`: Predicted total ddG values including entropy contribution
 - `r_ddGs::Vector{Float64}`: Original Rosetta ddG predictions
 """
-function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64)
+function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0)
     # Compute Gamma matrix from PDB file
     coordinates = read_coordinates(pdb_path)
     Γ = compute_Γ(coordinates)
     
     # Process mutations
     mutations = read_mutations_from_file(task_file_path)
-    results = filter(!isnothing, [process_single_mutation(m, parse_mutation_position(m), single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A) for m in mutations])
+    results = Vector{Tuple{Float64, Float64, Float64}}()
+    
+    for m in mutations
+        position = parse_mutation_position(m)
+        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, offset)
+        if result !== nothing
+            push!(results, result)
+        end
+    end
     
     # Extract results
     isempty(results) && return Float64[], Float64[], Float64[]
@@ -134,7 +144,7 @@ function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64
 end
 
 """Extract the position number from a mutation string."""
-parse_mutation_position(mutation::String) = parse(Int, match(r"\d+", mutation).match)
+parse_mutation_position(mutation::AbstractString) = parse(Int, match(r"\d+", mutation).match)
 
 """Get the experimental ΔΔG value for a specific position and mutation."""
 function get_experimental_ddg(ddG_exp::DataFrame, position::Int, mutation_residue::String)
@@ -148,16 +158,19 @@ function read_mutations_from_file(task_file_path::String)
 end
 
 """Process a single mutation and return the calculated values."""
-function process_single_mutation(mutation::String, position::Int, single_ddG::Dict{String, Float64}, 
+function process_single_mutation(mutation::AbstractString, position::Int, single_ddG::Dict{String, Float64}, 
                                 paes::Dict{String, Matrix{Float64}}, Γ::Matrix{Float64}, 
-                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64)
+                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0)
     
     mutation_upper = uppercase(mutation)
-    haskey(single_ddG, mutation_upper) || return nothing
+    if !haskey(single_ddG, mutation_upper)
+        # println("Skipping variant: $mutation (not found in single_ddG)")
+        return nothing
+    end
     
     ddG = single_ddG[mutation_upper]
     pae = paes[mutation]
-    ΔΔS = MutationEntropy.ΔΔS(position, rho, Γ, pae, WT_pae)
+    ΔΔS = MutationEntropy.ΔΔS(position, rho, Γ, pae, WT_pae, offset)
     predicted_ddG = ΔΔG_prime(A, ΔΔS, ddG)
     experimental_ddG = get_experimental_ddg(ddG_exp, position, string(mutation_upper[end]))
     
