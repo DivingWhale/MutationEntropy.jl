@@ -356,22 +356,8 @@ function calculate_strain(alpha::Float64, pae::Matrix{Float64}, d_matrix::Matrix
         valid_neighbors_for_sum += 1
     end
 
-    # Denominator logic based on original `calculate_strain`'s use of `length(nearby_residues)`
-    # which counts all residues within sphere (including self if dist_val < distance_cutoff).
-    # However, the summation loop skips self.
-    # If nearby_residues is empty or only contains `site`, length might be 0 or 1.
-    # The original `collect_strains` used a `valid_count` for its average.
-    # This standalone `calculate_strain` is a bit ambiguous.
-    # Using `valid_neighbors_for_sum` for the average is more robust if that's the intent.
-    # If `length(nearby_residues)` must be used:
-    # num_denominator = length(nearby_residues)
-    # If `site` is in `nearby_residues`, and we want to average over *other* neighbors,
-    # then num_denominator should be `length(nearby_residues) - 1` (if site was present).
-    # The original `collect_strains` averaging method (sum / N_interacting_partners) is clearer.
-    # For this standalone function, sticking to `length(nearby_residues)` as per original structure.
-    # Add check for division by zero.
     if length(nearby_residues) > 0
-        strain = strain / length(nearby_residues) 
+        strain = strain / (length(nearby_residues) - 1) # Exclude self from average
     else
         strain = 0.0 # Or handle as an error, or return NaN
         @warn "No residues found by find_residues_within_distance for site $site to average strain. Strain set to 0."
