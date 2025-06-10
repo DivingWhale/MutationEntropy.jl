@@ -133,7 +133,7 @@ function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64
     for m in mutations
         position = parse_mutation_position(m)
         result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, offset)
-        if result !== nothing
+        if result[2] !== NaN
             push!(results, result)
         end
     end
