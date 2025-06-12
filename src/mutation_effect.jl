@@ -60,12 +60,22 @@ end
 Get the dimension of protein structure (number of C-alpha atoms) for initializing distance matrix.
 """
 function get_structure_dimension(datadir::String, mutation::String, round_val::Int) # Renamed round to round_val to avoid conflict if `round` function is meant
-    # Construct the path to the model PDB file
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
-    subfolders = glob(subfolder_pattern)
+    # Construct the base directory path
+    base_dir = joinpath(datadir, "$(mutation)_$(round_val)")
+    
+    # Use glob with relative pattern from the base directory
+    subfolder_pattern = "seed-*_sample-0"
+    
+    if !isdir(base_dir)
+        error("Base directory not found: $base_dir")
+    end
+    
+    subfolders = glob(subfolder_pattern, base_dir)
+    # Convert relative paths to absolute paths
+    subfolders = [joinpath(base_dir, sf) for sf in subfolders]
     
     if isempty(subfolders)
-        error("No matching folder found: $subfolder_pattern")
+        error("No matching folder found: $subfolder_pattern in $base_dir")
     end
     
     subfolder = subfolders[1] # Assumes the first match is the desired one
@@ -87,11 +97,22 @@ end
 Calculate the distance map for a specific mutation and round.
 """
 function get_dist_map(datadir::String, mutation::String, round_val::Int) # Renamed round
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
-    subfolders = glob(subfolder_pattern)
+    # Construct the base directory path
+    base_dir = joinpath(datadir, "$(mutation)_$(round_val)")
+    
+    # Use glob with relative pattern from the base directory
+    subfolder_pattern = "seed-*_sample-0"
+    
+    if !isdir(base_dir)
+        error("Base directory not found: $base_dir")
+    end
+    
+    subfolders = glob(subfolder_pattern, base_dir)
+    # Convert relative paths to absolute paths
+    subfolders = [joinpath(base_dir, sf) for sf in subfolders]
     
     if isempty(subfolders)
-        error("No matching folder found: $subfolder_pattern")
+        error("No matching folder found: $subfolder_pattern in $base_dir")
     end
     
     subfolder = subfolders[1]
@@ -196,11 +217,22 @@ end
 Identify residues with low pLDDT scores.
 """
 function get_low_plddt_residues(mutation::String, round_val::Int, datadir::String; threshold::Float64=90.0) # Renamed round
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
-    subfolders = glob(subfolder_pattern)
+    # Construct the base directory path
+    base_dir = joinpath(datadir, "$(mutation)_$(round_val)")
+    
+    # Use glob with relative pattern from the base directory
+    subfolder_pattern = "seed-*_sample-0"
+    
+    if !isdir(base_dir)
+        error("Base directory not found: $base_dir")
+    end
+    
+    subfolders = glob(subfolder_pattern, base_dir)
+    # Convert relative paths to absolute paths
+    subfolders = [joinpath(base_dir, sf) for sf in subfolders]
     
     if isempty(subfolders)
-        error("No matching folder found: $subfolder_pattern")
+        error("No matching folder found: $subfolder_pattern in $base_dir")
     end
     
     subfolder = subfolders[1]
@@ -284,11 +316,22 @@ end
 Read the Predicted Aligned Error (PAE) matrix.
 """
 function read_pae(datadir::String, mutation::String, round_val::Int) # Renamed round
-    subfolder_pattern = "$(datadir)/$(mutation)_$(round_val)/seed-*_sample-0"
-    subfolders = glob(subfolder_pattern)
+    # Construct the base directory path
+    base_dir = joinpath(datadir, "$(mutation)_$(round_val)")
+    
+    # Use glob with relative pattern from the base directory
+    subfolder_pattern = "seed-*_sample-0"
+    
+    if !isdir(base_dir)
+        error("Base directory not found: $base_dir for $mutation round $round_val")
+    end
+    
+    subfolders = glob(subfolder_pattern, base_dir)
+    # Convert relative paths to absolute paths
+    subfolders = [joinpath(base_dir, sf) for sf in subfolders]
     
     if isempty(subfolders)
-        error("No matching folder found for $mutation round $round_val")
+        error("No matching folder found for $mutation round $round_val: $subfolder_pattern in $base_dir")
     end
     
     subfolder = subfolders[1]

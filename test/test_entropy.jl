@@ -143,13 +143,26 @@ using BioStructures
         position = 4  # Position with zero connections
         rho = 1.5
         
-        result = MutationEntropy.ΔΔS(position, rho, test_Γ, test_PAE_mut, test_PAE_wt)
+        # Create test data for the new parameters
+        datadir = tempdir()  # Use temp directory for test
+        mutation = "TestMutation123"  # Valid non-empty mutation string
+        
+        # For testing, we'll create mock distance matrices
+        test_dist_matrix = rand(10, 10) .+ 1.0  # Ensure positive distances
+        for i in 1:10
+            test_dist_matrix[i, i] = 0.0  # Self-distance is 0
+        end
+        
+        # We'll pass the WT distance matrix directly to avoid file I/O in tests
+        result = MutationEntropy.ΔΔS(position, rho, test_Γ, test_PAE_mut, test_PAE_wt, 
+                                     mutation, datadir, wt_dist_matrix=test_dist_matrix)
         
         # Result should be a real number
         @test isa(result, Real)
         
         # Test with offset
-        result_offset = MutationEntropy.ΔΔS(position + 1, rho, test_Γ, test_PAE_mut, test_PAE_wt, 1)
+        result_offset = MutationEntropy.ΔΔS(position + 1, rho, test_Γ, test_PAE_mut, test_PAE_wt, 
+                                           mutation, datadir, wt_dist_matrix=test_dist_matrix, offset=1)
         @test result ≈ result_offset
     end
 
@@ -247,8 +260,17 @@ using BioStructures
         
         # Calculate ΔΔS for all positions
         rho = 1.5
+        # Create test parameters for ΔΔS
+        test_datadir = tempdir()
+        test_mutation = "TestMutation"
+        test_dist_matrix = rand(3, 3) .+ 1.0
+        for i in 1:3
+            test_dist_matrix[i, i] = 0.0
+        end
+        
         for pos in 1:3
-            result = MutationEntropy.ΔΔS(pos, rho, Γ_matrix, test_PAE, test_PAE * 0.9)
+            result = MutationEntropy.ΔΔS(pos, rho, Γ_matrix, test_PAE, test_PAE * 0.9, 
+                                         test_mutation, test_datadir, wt_dist_matrix=test_dist_matrix)
             @test isa(result, Real)
         end
     end

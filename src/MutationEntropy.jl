@@ -10,7 +10,7 @@ using DataFrames
 using JLD2
 using Distributed
 
-export read_coordinates, read_xvg, plot_msf, calculate_ddgs
+export read_coordinates, read_xvg, plot_msf, calculate_ddgs, EntropyConfig, ΔΔS
 
 include("entropy.jl")
 include("ddg.jl")

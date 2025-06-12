@@ -42,7 +42,7 @@ function msf(Γ::AbstractMatrix)
     return diag(pinv(Γ))
 end
 
-function read_single_pae(data_path::String, mutation::String)
+function read_single_pae(data_path::String, mutation::AbstractString)
     pae_files = glob("$(mutation)_*", data_path)
     pae_data = nothing
     num_files = 0
@@ -148,12 +148,82 @@ function read_paes(task_file_path::String, source_data_path::String)
     return paes
 end
 
-function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, offset::Int64=0)
-    matrix_idx = position - offset
+# Configuration struct for entropy calculations
+"""
+    EntropyConfig
+
+Configuration structure for entropy calculations.
+
+# Fields
+- `datadir::String`: Directory containing structure data
+- `round_val::Int`: Round number for structure selection (default: 1)
+- `wt_identifier::String`: Identifier for wild-type structure (default: "WT")
+- `wt_dist_matrix::Union{Matrix{Float64}, Nothing}`: Pre-computed WT distance matrix (optional)
+- `offset::Int64`: Offset between protein position numbers and matrix indices (default: 0)
+"""
+struct EntropyConfig
+    datadir::String
+    round_val::Int
+    wt_identifier::String
+    wt_dist_matrix::Union{Matrix{Float64}, Nothing}
+    offset::Int64
+    
+    # Constructor with defaults
+    function EntropyConfig(datadir::String; 
+                          round_val::Int=1, 
+                          wt_identifier::String="WT", 
+                          wt_dist_matrix::Union{Matrix{Float64}, Nothing}=nothing,
+                          offset::Int64=0)
+        new(datadir, round_val, wt_identifier, wt_dist_matrix, offset)
+    end
+end
+
+function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, 
+             PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, 
+             mutation::AbstractString, config::EntropyConfig)
+    matrix_idx = position - config.offset
     indices = findall(x -> isapprox(x, 0.0, atol=1e-6), Γ[matrix_idx, :])
+    
+    # Get distance matrices
+    local dist_mut, dist_wt  # Declare variables in function scope
+    
+    # For mutant, always read using get_dist_map for caching
+    try
+        dist_mut = get_dist_map(config.datadir, String(mutation), config.round_val)
+    catch e
+        # Fallback for testing or when files don't exist
+        @warn "Could not read mutant distance matrix for $mutation: $e. Using identity matrix."
+        dist_mut = Matrix{Float64}(I, size(PAE_mut))
+    end
+    
+    # For WT, use provided matrix if available, otherwise read it
+    if config.wt_dist_matrix !== nothing
+        dist_wt = config.wt_dist_matrix
+    else
+        try
+            dist_wt = get_dist_map(config.datadir, config.wt_identifier, config.round_val)
+        catch e
+            # Fallback for testing or when files don't exist
+            @warn "Could not read WT distance matrix for $(config.wt_identifier): $e. Using identity matrix."
+            dist_wt = Matrix{Float64}(I, size(PAE_wt))
+        end
+    end
+    
     ΔΔS = 0.0
     for i in indices
-        ΔΔS += PAE_mut[matrix_idx, i]^(2-rho) - PAE_wt[matrix_idx, i]^(2-rho)
+        # Ensure distance matrices have the correct dimensions
+        if matrix_idx <= size(dist_mut, 1) && i <= size(dist_mut, 2) && 
+           matrix_idx <= size(dist_wt, 1) && i <= size(dist_wt, 2)
+            
+            # Get distances and ensure they're positive to avoid division by zero
+            d_mut = dist_mut[matrix_idx, i]
+            d_wt = dist_wt[matrix_idx, i]
+            
+            if d_mut > 0.0 && d_wt > 0.0
+                # Use PAE divided by distance cubed
+                ΔΔS += PAE_mut[matrix_idx, i]^(2-rho) / (d_mut^3) - PAE_wt[matrix_idx, i]^(2-rho) / (d_wt^3)
+            end
+        end
     end
     ΔΔS = ΔΔS ./ length(indices)
     return ΔΔS
@@ -164,7 +234,7 @@ function ΔΔG_prime(A::Float64, ΔΔS::Float64, ΔΔG::Float64)
 end
 
 """
-    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0, verbose::Bool=false)
+    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, config::EntropyConfig; verbose::Bool=false)
 
 Calculate the predicted ΔΔG values for a set of mutations.
 
@@ -177,7 +247,7 @@ Calculate the predicted ΔΔG values for a set of mutations.
 - `ddG_exp::DataFrame`: DataFrame containing experimental ddG values
 - `rho::Float64`: Parameter controlling contribution of PAE differences
 - `A::Float64`: Scaling parameter for entropy contribution
-- `offset::Int64`: Offset between protein position numbers and matrix indices (default: 0)
+- `config::EntropyConfig`: Configuration for entropy calculations
 - `verbose::Bool`: If true, prints details about skipped variants
 
 # Returns
@@ -185,7 +255,7 @@ Calculate the predicted ΔΔG values for a set of mutations.
 - `ΔΔGs::Vector{Float64}`: Predicted total ddG values including entropy contribution
 - `r_ddGs::Vector{Float64}`: Original Rosetta ddG predictions
 """
-function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0, verbose::Bool=false)
+function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, config::EntropyConfig; verbose::Bool=false)
     # Compute Gamma matrix from PDB file
     coordinates = read_coordinates(pdb_path)
     Γ = compute_Γ(coordinates)
@@ -196,7 +266,7 @@ function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64
     
     for m in mutations
         position = parse_mutation_position(m)
-        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, offset, verbose)
+        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, config, verbose)
         if result !== nothing && result[2] !== NaN
             push!(results, result)
         end
@@ -224,7 +294,8 @@ end
 """Process a single mutation and return the calculated values."""
 function process_single_mutation(mutation::AbstractString, position::Int, single_ddG::Dict{String, Float64}, 
                                 paes::Dict{String, Matrix{Float64}}, Γ::Matrix{Float64}, 
-                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0, verbose::Bool=false)
+                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, 
+                                config::EntropyConfig, verbose::Bool=false)
     
     mutation_upper = uppercase(mutation)
     if !haskey(single_ddG, mutation_upper)
@@ -236,9 +307,62 @@ function process_single_mutation(mutation::AbstractString, position::Int, single
     
     ddG = single_ddG[mutation_upper]
     pae = paes[mutation]
-    ΔΔS = MutationEntropy.ΔΔS(position, rho, Γ, pae, WT_pae, offset)
-    predicted_ddG = ΔΔG_prime(A, ΔΔS, ddG)
+    ΔΔS_val = ΔΔS(position, rho, Γ, pae, WT_pae, mutation, config)
+    predicted_ddG = ΔΔG_prime(A, ΔΔS_val, ddG)
     experimental_ddG = get_experimental_ddg(ddG_exp, position, string(mutation_upper[end]))
     
     return (experimental_ddG, predicted_ddG, ddG)
+end
+
+"""
+    ΔΔS(position, rho, Γ, PAE_mut, PAE_wt, mutation, datadir; kwargs...)
+
+Convenience function for ΔΔS calculation with simplified interface.
+
+# Arguments
+- `position::Int64`: Position of the mutation
+- `rho::Float64`: Parameter controlling contribution of PAE differences  
+- `Γ::Matrix{Float64}`: Gamma matrix defining connectivity
+- `PAE_mut::Matrix{Float64}`: PAE matrix for mutant
+- `PAE_wt::Matrix{Float64}`: PAE matrix for wild-type
+- `mutation::AbstractString`: Mutation identifier
+- `datadir::String`: Directory containing structure data
+
+# Keyword Arguments
+- `round_val::Int=1`: Round number for structure selection
+- `wt_identifier::String="WT"`: Identifier for wild-type structure  
+- `wt_dist_matrix::Union{Matrix{Float64}, Nothing}=nothing`: Pre-computed WT distance matrix
+- `offset::Int64=0`: Offset between protein position numbers and matrix indices
+
+# Returns
+- `Float64`: Calculated ΔΔS value
+"""
+function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, 
+             PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, 
+             mutation::AbstractString, datadir::String; kwargs...)
+    config = EntropyConfig(datadir; kwargs...)
+    return ΔΔS(position, rho, Γ, PAE_mut, PAE_wt, mutation, config)
+end
+
+"""
+    calculate_ddgs(task_file_path, single_ddG, pdb_path, WT_pae, paes, ddG_exp, rho, A, datadir; kwargs...)
+
+Convenience function for calculate_ddgs with simplified interface.
+
+# Arguments
+Same as the main function, with `datadir` instead of `config`
+
+# Keyword Arguments  
+- `round_val::Int=1`: Round number for structure selection
+- `wt_identifier::String="WT"`: Identifier for wild-type structure
+- `wt_dist_matrix::Union{Matrix{Float64}, Nothing}=nothing`: Pre-computed WT distance matrix
+- `offset::Int64=0`: Offset between protein position numbers and matrix indices
+- `verbose::Bool=false`: If true, prints details about skipped variants
+"""
+function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, 
+                       pdb_path::String, WT_pae::Matrix{Float64}, 
+                       paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, 
+                       rho::Float64, A::Float64, datadir::String; kwargs...)
+    config = EntropyConfig(datadir; kwargs...)
+    return calculate_ddgs(task_file_path, single_ddG, pdb_path, WT_pae, paes, ddG_exp, rho, A, config; verbose=get(kwargs, :verbose, false))
 end
