@@ -164,7 +164,7 @@ function ΔΔG_prime(A::Float64, ΔΔS::Float64, ΔΔG::Float64)
 end
 
 """
-    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0)
+    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0, verbose::Bool=false)
 
 Calculate the predicted ΔΔG values for a set of mutations.
 
@@ -178,13 +178,14 @@ Calculate the predicted ΔΔG values for a set of mutations.
 - `rho::Float64`: Parameter controlling contribution of PAE differences
 - `A::Float64`: Scaling parameter for entropy contribution
 - `offset::Int64`: Offset between protein position numbers and matrix indices (default: 0)
+- `verbose::Bool`: If true, prints details about skipped variants
 
 # Returns
 - `filtered_ddG_exp::Vector{Float64}`: Filtered experimental ddG values
 - `ΔΔGs::Vector{Float64}`: Predicted total ddG values including entropy contribution
 - `r_ddGs::Vector{Float64}`: Original Rosetta ddG predictions
 """
-function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0)
+function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0, verbose::Bool=false)
     # Compute Gamma matrix from PDB file
     coordinates = read_coordinates(pdb_path)
     Γ = compute_Γ(coordinates)
@@ -195,8 +196,8 @@ function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64
     
     for m in mutations
         position = parse_mutation_position(m)
-        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, offset)
-        if result[2] !== NaN
+        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, offset, verbose)
+        if result !== nothing && result[2] !== NaN
             push!(results, result)
         end
     end
@@ -223,11 +224,13 @@ end
 """Process a single mutation and return the calculated values."""
 function process_single_mutation(mutation::AbstractString, position::Int, single_ddG::Dict{String, Float64}, 
                                 paes::Dict{String, Matrix{Float64}}, Γ::Matrix{Float64}, 
-                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0)
+                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, offset::Int64=0, verbose::Bool=false)
     
     mutation_upper = uppercase(mutation)
     if !haskey(single_ddG, mutation_upper)
-        # println("Skipping variant: $mutation (not found in single_ddG)")
+        if verbose
+            println("Skipping variant: $mutation (not found in single_ddG)")
+        end
         return nothing
     end
     
