@@ -70,18 +70,81 @@ function read_single_pae(data_path::String, mutation::String)
     end
 end
 
-function read_paes(task_file_path::String)
-    paes = Dict{String, Matrix{Float64}}()
-    open(task_file_path, "r") do file
-        for line in eachline(file)
-            mutation = string(strip(line))
-            println(mutation)
-            pae = read_single_pae("data", mutation)
-            if pae !== nothing
-                paes[mutation] = pae
+function read_paes(task_file_path::String, source_data_path::String)
+    CACHE_DIR = ".pae_cache" # Cache directory will be created in the current working directory
+    println("Initializing PAE reading. Cache directory: $(abspath(CACHE_DIR))")
+
+    try
+        mkpath(CACHE_DIR)
+        println("Cache directory ensured at $(abspath(CACHE_DIR))")
+    catch e
+        @warn "Could not create cache directory $CACHE_DIR: $e. Caching may not work as expected."
+    end
+
+    mutations_list = read_mutations_from_file(task_file_path)
+    num_mutations = length(mutations_list)
+    println("Found $(num_mutations) mutations to process from $task_file_path.")
+    
+    results_channel = Channel{Tuple{String, Union{Matrix{Float64}, Nothing}}}(num_mutations)
+
+    println("Starting parallel processing of mutations...")
+    processed_count_atomic = Threads.Atomic{Int}(0) # Atomic counter for progress
+
+    Threads.@threads for mutation_original_case in mutations_list
+        mutation = string(strip(mutation_original_case))
+        
+        current_processed_count = Threads.atomic_add!(processed_count_atomic, 1)
+        println("Processing $(current_processed_count)/$(num_mutations): $mutation")
+
+        cache_file_name = "$(mutation).jld2"
+        cache_file_path = joinpath(CACHE_DIR, cache_file_name)
+        
+        loaded_pae = nothing
+
+        if isfile(cache_file_path)
+            try
+                loaded_pae = JLD2.load_object(cache_file_path)
+            catch err
+                @warn "Failed to load $mutation from cache file $cache_file_path: $err. Recomputing."
             end
         end
+
+        if loaded_pae === nothing # Cache miss or failed to load
+            loaded_pae = read_single_pae(source_data_path, mutation)
+            
+            if loaded_pae !== nothing
+                try
+                    JLD2.save_object(cache_file_path, loaded_pae)
+                catch err
+                    @warn "Failed to save $mutation to cache file $cache_file_path: $err."
+                end
+            else
+                println("No PAE data found for $mutation from source $source_data_path.") # Kept as it's an important specific outcome
+            end
+        end
+        
+        put!(results_channel, (mutation, loaded_pae))
     end
+    
+    close(results_channel)
+    println("Finished parallel processing. Aggregating results...")
+
+    paes = Dict{String, Matrix{Float64}}()
+    aggregated_count = 0
+    for (mut, pae_matrix) in results_channel
+        if pae_matrix !== nothing
+            paes[mut] = pae_matrix
+        else
+            println("Warning: No PAE data for mutation $mut after processing.")
+        end
+        aggregated_count += 1
+    end
+    # The variable `processed_count` was used in the previous version for the final print.
+    # Using `aggregated_count` which is the actual number of items taken from the channel.
+    # Or, using `num_mutations` to reflect total attempted.
+    # Let's use `num_mutations` for total attempted and `length(paes)` for successful.
+    println("Finished aggregation. Processed $(num_mutations) attempted mutations. $(length(paes)) mutations have PAE data.")
+    
     return paes
 end
 
