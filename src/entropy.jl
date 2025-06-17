@@ -182,8 +182,8 @@ function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64},
              PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, 
              mutation::AbstractString, config::EntropyConfig)
     matrix_idx = position - config.offset
-    indices = findall(x -> isapprox(x, 0.0, atol=1e-6), Γ[matrix_idx, :])
-    
+    indices = findall(x -> abs(x) > 1e-5, Γ[matrix_idx, :])
+
     # Get distance matrices
     local dist_mut, dist_wt  # Declare variables in function scope
     
@@ -220,8 +220,8 @@ function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64},
             d_wt = dist_wt[matrix_idx, i]
             
             if d_mut > 0.0 && d_wt > 0.0
-                # Use PAE divided by distance cubed
-                ΔΔS += PAE_mut[matrix_idx, i]^(2-rho) / (d_mut^3) - PAE_wt[matrix_idx, i]^(2-rho) / (d_wt^3)
+                # Use PAE divided by distance squared
+                ΔΔS += abs(Γ[matrix_idx, i]) * (PAE_mut[matrix_idx, i]^(2-rho) / (d_mut^3) - PAE_wt[matrix_idx, i]^(2-rho) / (d_wt^3))
             end
         end
     end
