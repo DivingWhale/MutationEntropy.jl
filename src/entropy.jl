@@ -70,31 +70,41 @@ function read_single_pae(data_path::String, mutation::AbstractString)
     end
 end
 
-function read_paes(task_file_path::String, source_data_path::String)
+function read_paes(task_file_path::String, source_data_path::String; verbose::Bool=false)
     CACHE_DIR = ".pae_cache" # Cache directory will be created in the current working directory
-    println("Initializing PAE reading. Cache directory: $(abspath(CACHE_DIR))")
+    if verbose
+        println("Initializing PAE reading. Cache directory: $(abspath(CACHE_DIR))")
+    end
 
     try
         mkpath(CACHE_DIR)
-        println("Cache directory ensured at $(abspath(CACHE_DIR))")
+        if verbose
+            println("Cache directory ensured at $(abspath(CACHE_DIR))")
+        end
     catch e
         @warn "Could not create cache directory $CACHE_DIR: $e. Caching may not work as expected."
     end
 
     mutations_list = read_mutations_from_file(task_file_path)
     num_mutations = length(mutations_list)
-    println("Found $(num_mutations) mutations to process from $task_file_path.")
+    if verbose
+        println("Found $(num_mutations) mutations to process from $task_file_path.")
+    end
     
     results_channel = Channel{Tuple{String, Union{Matrix{Float64}, Nothing}}}(num_mutations)
 
-    println("Starting parallel processing of mutations...")
+    if verbose
+        println("Starting parallel processing of mutations...")
+    end
     processed_count_atomic = Threads.Atomic{Int}(0) # Atomic counter for progress
 
     Threads.@threads for mutation_original_case in mutations_list
         mutation = string(strip(mutation_original_case))
         
         current_processed_count = Threads.atomic_add!(processed_count_atomic, 1)
-        println("Processing $(current_processed_count)/$(num_mutations): $mutation")
+        if verbose
+            println("Processing $(current_processed_count)/$(num_mutations): $mutation")
+        end
 
         cache_file_name = "$(mutation).jld2"
         cache_file_path = joinpath(CACHE_DIR, cache_file_name)
@@ -119,7 +129,9 @@ function read_paes(task_file_path::String, source_data_path::String)
                     @warn "Failed to save $mutation to cache file $cache_file_path: $err."
                 end
             else
-                println("No PAE data found for $mutation from source $source_data_path.") # Kept as it's an important specific outcome
+                if verbose
+                    println("No PAE data found for $mutation from source $source_data_path.") # Kept as it's an important specific outcome
+                end
             end
         end
         
@@ -127,7 +139,9 @@ function read_paes(task_file_path::String, source_data_path::String)
     end
     
     close(results_channel)
-    println("Finished parallel processing. Aggregating results...")
+    if verbose
+        println("Finished parallel processing. Aggregating results...")
+    end
 
     paes = Dict{String, Matrix{Float64}}()
     aggregated_count = 0
@@ -135,7 +149,9 @@ function read_paes(task_file_path::String, source_data_path::String)
         if pae_matrix !== nothing
             paes[mut] = pae_matrix
         else
-            println("Warning: No PAE data for mutation $mut after processing.")
+            if verbose
+                println("Warning: No PAE data for mutation $mut after processing.")
+            end
         end
         aggregated_count += 1
     end
@@ -143,7 +159,9 @@ function read_paes(task_file_path::String, source_data_path::String)
     # Using `aggregated_count` which is the actual number of items taken from the channel.
     # Or, using `num_mutations` to reflect total attempted.
     # Let's use `num_mutations` for total attempted and `length(paes)` for successful.
-    println("Finished aggregation. Processed $(num_mutations) attempted mutations. $(length(paes)) mutations have PAE data.")
+    if verbose
+        println("Finished aggregation. Processed $(num_mutations) attempted mutations. $(length(paes)) mutations have PAE data.")
+    end
     
     return paes
 end
@@ -269,6 +287,10 @@ function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64
         result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, config, verbose)
         if result !== nothing && result[2] !== NaN
             push!(results, result)
+        else
+            if verbose == true
+                println("Skipping mutation: $m (result is NaN or not found)")
+            end
         end
     end
     
@@ -312,57 +334,4 @@ function process_single_mutation(mutation::AbstractString, position::Int, single
     experimental_ddG = get_experimental_ddg(ddG_exp, position, string(mutation_upper[end]))
     
     return (experimental_ddG, predicted_ddG, ddG)
-end
-
-"""
-    ΔΔS(position, rho, Γ, PAE_mut, PAE_wt, mutation, datadir; kwargs...)
-
-Convenience function for ΔΔS calculation with simplified interface.
-
-# Arguments
-- `position::Int64`: Position of the mutation
-- `rho::Float64`: Parameter controlling contribution of PAE differences  
-- `Γ::Matrix{Float64}`: Gamma matrix defining connectivity
-- `PAE_mut::Matrix{Float64}`: PAE matrix for mutant
-- `PAE_wt::Matrix{Float64}`: PAE matrix for wild-type
-- `mutation::AbstractString`: Mutation identifier
-- `datadir::String`: Directory containing structure data
-
-# Keyword Arguments
-- `round_val::Int=1`: Round number for structure selection
-- `wt_identifier::String="WT"`: Identifier for wild-type structure  
-- `wt_dist_matrix::Union{Matrix{Float64}, Nothing}=nothing`: Pre-computed WT distance matrix
-- `offset::Int64=0`: Offset between protein position numbers and matrix indices
-
-# Returns
-- `Float64`: Calculated ΔΔS value
-"""
-function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, 
-             PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, 
-             mutation::AbstractString, datadir::String; kwargs...)
-    config = EntropyConfig(datadir; kwargs...)
-    return ΔΔS(position, rho, Γ, PAE_mut, PAE_wt, mutation, config)
-end
-
-"""
-    calculate_ddgs(task_file_path, single_ddG, pdb_path, WT_pae, paes, ddG_exp, rho, A, datadir; kwargs...)
-
-Convenience function for calculate_ddgs with simplified interface.
-
-# Arguments
-Same as the main function, with `datadir` instead of `config`
-
-# Keyword Arguments  
-- `round_val::Int=1`: Round number for structure selection
-- `wt_identifier::String="WT"`: Identifier for wild-type structure
-- `wt_dist_matrix::Union{Matrix{Float64}, Nothing}=nothing`: Pre-computed WT distance matrix
-- `offset::Int64=0`: Offset between protein position numbers and matrix indices
-- `verbose::Bool=false`: If true, prints details about skipped variants
-"""
-function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, 
-                       pdb_path::String, WT_pae::Matrix{Float64}, 
-                       paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, 
-                       rho::Float64, A::Float64, datadir::String; kwargs...)
-    config = EntropyConfig(datadir; kwargs...)
-    return calculate_ddgs(task_file_path, single_ddG, pdb_path, WT_pae, paes, ddG_exp, rho, A, config; verbose=get(kwargs, :verbose, false))
 end
