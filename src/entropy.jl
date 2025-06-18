@@ -196,7 +196,7 @@ struct EntropyConfig
     end
 end
 
-function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64}, 
+function ΔΔS(position::Int64, rho::Float64, α::Float64, Γ::Matrix{Float64}, 
              PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, 
              mutation::AbstractString, config::EntropyConfig)
     matrix_idx = position - config.offset
@@ -239,7 +239,7 @@ function ΔΔS(position::Int64, rho::Float64, Γ::Matrix{Float64},
             
             if d_mut > 0.0 && d_wt > 0.0
                 # Use PAE divided by distance squared
-                ΔΔS += abs(Γ[matrix_idx, i]) * (PAE_mut[matrix_idx, i]^(2-rho) / (d_mut^3) - PAE_wt[matrix_idx, i]^(2-rho) / (d_wt^3))
+                ΔΔS += abs(Γ[matrix_idx, i]) * (PAE_mut[matrix_idx, i]^(2-rho) / (d_mut^α) - PAE_wt[matrix_idx, i]^(2-rho) / (d_wt^α))
             end
         end
     end
@@ -265,6 +265,7 @@ Calculate the predicted ΔΔG values for a set of mutations.
 - `ddG_exp::DataFrame`: DataFrame containing experimental ddG values
 - `rho::Float64`: Parameter controlling contribution of PAE differences
 - `A::Float64`: Scaling parameter for entropy contribution
+- `α::Float64`: Exponent for distance scaling in entropy calculation
 - `config::EntropyConfig`: Configuration for entropy calculations
 - `verbose::Bool`: If true, prints details about skipped variants
 
@@ -273,7 +274,7 @@ Calculate the predicted ΔΔG values for a set of mutations.
 - `ΔΔGs::Vector{Float64}`: Predicted total ddG values including entropy contribution
 - `r_ddGs::Vector{Float64}`: Original Rosetta ddG predictions
 """
-function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, config::EntropyConfig; verbose::Bool=false)
+function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, α::Float64, config::EntropyConfig; verbose::Bool=false)
     # Compute Gamma matrix from PDB file
     coordinates = read_coordinates(pdb_path)
     Γ = compute_Γ(coordinates)
@@ -284,7 +285,7 @@ function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64
     
     for m in mutations
         position = parse_mutation_position(m)
-        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, config, verbose)
+        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, α, config, verbose)
         if result !== nothing && result[2] !== NaN
             push!(results, result)
         else
@@ -316,7 +317,7 @@ end
 """Process a single mutation and return the calculated values."""
 function process_single_mutation(mutation::AbstractString, position::Int, single_ddG::Dict{String, Float64}, 
                                 paes::Dict{String, Matrix{Float64}}, Γ::Matrix{Float64}, 
-                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, 
+                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, α::Float64, 
                                 config::EntropyConfig, verbose::Bool=false)
     
     mutation_upper = uppercase(mutation)
@@ -329,7 +330,7 @@ function process_single_mutation(mutation::AbstractString, position::Int, single
     
     ddG = single_ddG[mutation_upper]
     pae = paes[mutation]
-    ΔΔS_val = ΔΔS(position, rho, Γ, pae, WT_pae, mutation, config)
+    ΔΔS_val = ΔΔS(position, rho, α, Γ, pae, WT_pae, mutation, config)
     predicted_ddG = ΔΔG_prime(A, ΔΔS_val, ddG)
     experimental_ddG = get_experimental_ddg(ddG_exp, position, string(mutation_upper[end]))
     
