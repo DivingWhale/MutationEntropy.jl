@@ -153,19 +153,24 @@ using BioStructures
             test_dist_matrix[i, i] = 0.0  # Self-distance is 0
         end
         
-        # Create entropy configuration for new interface
-        config = MutationEntropy.EntropyConfig(datadir, wt_dist_matrix=test_dist_matrix)
+        # Create entropy configuration for new interface - now uses vector of matrices
+        test_wt_dist_matrices = [test_dist_matrix]  # Single round for testing
+        config = MutationEntropy.EntropyConfig(datadir; wt_identifier="test", wt_dist_matrices=test_wt_dist_matrices)
         
-        # We'll pass the WT distance matrix directly to avoid file I/O in tests
-        result = MutationEntropy.ΔΔS(position, rho, test_Γ, test_PAE_mut, test_PAE_wt, 
+        # We'll pass the WT distance matrices directly to avoid file I/O in tests
+        # For testing, use single-element vectors to match new multi-round structure
+        test_PAE_mut_vector = [test_PAE_mut]
+        test_PAE_wt_vector = [test_PAE_wt]
+        α = 2.5  # Test α parameter
+        result = MutationEntropy.ΔΔS(position, rho, α, test_Γ, test_PAE_mut_vector, test_PAE_wt_vector, 
                                      mutation, config)
         
         # Result should be a real number
         @test isa(result, Real)
         
         # Test with offset
-        config_offset = MutationEntropy.EntropyConfig(datadir, wt_dist_matrix=test_dist_matrix, offset=1)
-        result_offset = MutationEntropy.ΔΔS(position + 1, rho, test_Γ, test_PAE_mut, test_PAE_wt, 
+        config_offset = MutationEntropy.EntropyConfig(datadir; wt_identifier="test", wt_dist_matrices=test_wt_dist_matrices, offset=1)
+        result_offset = MutationEntropy.ΔΔS(position + 1, rho, α, test_Γ, test_PAE_mut_vector, test_PAE_wt_vector, 
                                            mutation, config_offset)
         # Handle NaN case properly - if both are NaN, they should be considered equal for this test
         @test (isnan(result) && isnan(result_offset)) || result ≈ result_offset
@@ -274,10 +279,15 @@ using BioStructures
         end
         
         # Create entropy configuration for new interface
-        config = MutationEntropy.EntropyConfig(test_datadir, wt_dist_matrix=test_dist_matrix)
+        test_wt_dist_matrices = [test_dist_matrix]  # Single round for testing
+        config = MutationEntropy.EntropyConfig(test_datadir; wt_identifier="test", wt_dist_matrices=test_wt_dist_matrices)
         
         for pos in 1:3
-            result = MutationEntropy.ΔΔS(pos, rho, Γ_matrix, test_PAE, test_PAE * 0.9, 
+            # Use vector format for new multi-round structure
+            test_PAE_vector = [test_PAE]
+            test_PAE_wt_vector = [test_PAE * 0.9]
+            α = 2.5  # Test α parameter
+            result = MutationEntropy.ΔΔS(pos, rho, α, Γ_matrix, test_PAE_vector, test_PAE_wt_vector, 
                                          test_mutation, config)
             @test isa(result, Real)
         end

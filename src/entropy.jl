@@ -42,38 +42,46 @@ function msf(Γ::AbstractMatrix)
     return diag(pinv(Γ))
 end
 
-function read_single_pae(data_path::String, mutation::AbstractString)
-    pae_files = glob("$(mutation)_*", data_path)
-    pae_data = nothing
-    num_files = 0
-    for pae_file in pae_files
-        top1_files = glob("seed-*_sample-0", pae_file)
-        if !isempty(top1_files)
-            top1 = top1_files[1]
-            raw_data = JSON.parsefile(joinpath(top1, "confidences.json"))
-            pae_any = raw_data["pae"]
-            pae = map(x -> map(Float64, x), pae_any)
-            pae =  hcat(pae...)'
-          
-            if pae_data === nothing
-                pae_data = zeros(Float64, size(pae))
-            end
-           
-            pae_data .+= pae
-            num_files += 1
-        end
+function read_single_pae(data_path::String, mutation::AbstractString, round_val::Int)
+    round_dir = joinpath(data_path, "$(mutation)_$(round_val)")
+    
+    if !isdir(round_dir)
+        return nothing
     end
-    if num_files > 0
-        return pae_data ./ num_files
-    else
+    
+    # Find seed directories in this round and sort to get consistent ordering
+    seed_dirs = sort(glob("seed-*_sample-0", round_dir))
+    
+    if isempty(seed_dirs)
+        return nothing
+    end
+    
+    # Read only the first seed (top1)
+    first_seed_dir = seed_dirs[1]
+    full_seed_path = joinpath(round_dir, first_seed_dir)
+    confidence_file = joinpath(full_seed_path, "confidences.json")
+    
+    if !isfile(confidence_file)
+        return nothing
+    end
+    
+    try
+        raw_data = JSON.parsefile(confidence_file)
+        pae_any = raw_data["pae"]
+        pae = map(x -> map(Float64, x), pae_any)
+        pae = hcat(pae...)'
+        
+        return pae
+    catch e
+        @warn "Failed to read PAE data from $confidence_file: $e"
         return nothing
     end
 end
 
-function read_paes(task_file_path::String, source_data_path::String; verbose::Bool=false)
-    CACHE_DIR = ".pae_cache" # Cache directory will be created in the current working directory
+function read_paes(task_file_path::String, source_data_path::String; verbose::Bool=false, num_rounds::Int=20)
+    CACHE_DIR = joinpath(source_data_path, ".pae_cache")
     if verbose
-        println("Initializing PAE reading. Cache directory: $(abspath(CACHE_DIR))")
+        println("Initializing multi-round PAE reading. Cache directory: $(abspath(CACHE_DIR))")
     end
 
     try
@@ -91,7 +99,7 @@ function read_paes(task_file_path::String, source_data_path::String; verbose::Bo
         println("Found $(num_mutations) mutations to process from $task_file_path.")
     end
     
-    results_channel = Channel{Tuple{String, Union{Matrix{Float64}, Nothing}}}(num_mutations)
+    results_channel = Channel{Tuple{String, Union{Vector{Matrix{Float64}}, Nothing}}}(num_mutations)
 
     if verbose
         println("Starting parallel processing of mutations...")
@@ -106,7 +114,7 @@ function read_paes(task_file_path::String, source_data_path::String; verbose::Bo
             println("Processing $(current_processed_count)/$(num_mutations): $mutation")
         end
 
-        cache_file_name = "$(mutation).jld2"
+        cache_file_name = "$(mutation)_multiround.jld2"
         cache_file_path = joinpath(CACHE_DIR, cache_file_name)
         
         loaded_pae = nothing
@@ -120,9 +128,19 @@ function read_paes(task_file_path::String, source_data_path::String; verbose::Bo
         end
 
         if loaded_pae === nothing # Cache miss or failed to load
-            loaded_pae = read_single_pae(source_data_path, mutation)
+            # Read PAE data for multiple rounds
+            pae_matrices = Vector{Matrix{Float64}}()
             
-            if loaded_pae !== nothing
+            for round_idx in 1:num_rounds
+                round_pae = read_single_pae(source_data_path, mutation, round_idx)
+                if round_pae !== nothing
+                    push!(pae_matrices, round_pae)
+                end
+            end
+            
+            loaded_pae = pae_matrices
+            
+            if !isempty(loaded_pae)
                 try
                     JLD2.save_object(cache_file_path, loaded_pae)
                 catch err
@@ -132,6 +150,7 @@ function read_paes(task_file_path::String, source_data_path::String; verbose::Bo
                 if verbose
                     println("No PAE data found for $mutation from source $source_data_path.") # Kept as it's an important specific outcome
                 end
+                loaded_pae = nothing
             end
         end
         
@@ -143,11 +162,11 @@ function read_paes(task_file_path::String, source_data_path::String; verbose::Bo
         println("Finished parallel processing. Aggregating results...")
     end
 
-    paes = Dict{String, Matrix{Float64}}()
+    paes = Dict{String, Vector{Matrix{Float64}}}()
     aggregated_count = 0
-    for (mut, pae_matrix) in results_channel
-        if pae_matrix !== nothing
-            paes[mut] = pae_matrix
+    for (mut, pae_matrices) in results_channel
+        if pae_matrices !== nothing && !isempty(pae_matrices)
+            paes[mut] = pae_matrices
         else
             if verbose
                 println("Warning: No PAE data for mutation $mut after processing.")
@@ -155,10 +174,7 @@ function read_paes(task_file_path::String, source_data_path::String; verbose::Bo
         end
         aggregated_count += 1
     end
-    # The variable `processed_count` was used in the previous version for the final print.
-    # Using `aggregated_count` which is the actual number of items taken from the channel.
-    # Or, using `num_mutations` to reflect total attempted.
-    # Let's use `num_mutations` for total attempted and `length(paes)` for successful.
+    
     if verbose
         println("Finished aggregation. Processed $(num_mutations) attempted mutations. $(length(paes)) mutations have PAE data.")
     end
@@ -174,76 +190,100 @@ Configuration structure for entropy calculations.
 
 # Fields
 - `datadir::String`: Directory containing structure data
-- `round_val::Int`: Round number for structure selection (default: 1)
 - `wt_identifier::String`: Identifier for wild-type structure (default: "WT")
-- `wt_dist_matrix::Union{Matrix{Float64}, Nothing}`: Pre-computed WT distance matrix (optional)
+- `wt_dist_matrices::Union{Vector{Matrix{Float64}}, Nothing}`: Pre-computed WT distance matrices for all rounds (optional)
 - `offset::Int64`: Offset between protein position numbers and matrix indices (default: 0)
 """
 struct EntropyConfig
     datadir::String
-    round_val::Int
     wt_identifier::String
-    wt_dist_matrix::Union{Matrix{Float64}, Nothing}
+    wt_dist_matrices::Union{Vector{Matrix{Float64}}, Nothing}
     offset::Int64
     
     # Constructor with defaults
     function EntropyConfig(datadir::String; 
-                          round_val::Int=1, 
                           wt_identifier::String="WT", 
-                          wt_dist_matrix::Union{Matrix{Float64}, Nothing}=nothing,
+                          wt_dist_matrices::Union{Vector{Matrix{Float64}}, Nothing}=nothing,
                           offset::Int64=0)
-        new(datadir, round_val, wt_identifier, wt_dist_matrix, offset)
+        new(datadir, wt_identifier, wt_dist_matrices, offset)
     end
 end
 
 function ΔΔS(position::Int64, rho::Float64, α::Float64, Γ::Matrix{Float64}, 
-             PAE_mut::Matrix{Float64}, PAE_wt::Matrix{Float64}, 
+             PAE_mut_rounds::Vector{Matrix{Float64}}, PAE_wt_rounds::Vector{Matrix{Float64}}, 
              mutation::AbstractString, config::EntropyConfig)
     matrix_idx = position - config.offset
     indices = findall(x -> abs(x) > 1e-5, Γ[matrix_idx, :])
 
-    # Get distance matrices
-    local dist_mut, dist_wt  # Declare variables in function scope
-    
-    # For mutant, always read using get_dist_map for caching
-    try
-        dist_mut = get_dist_map(config.datadir, String(mutation), config.round_val)
-    catch e
-        # Fallback for testing or when files don't exist
-        @warn "Could not read mutant distance matrix for $mutation: $e. Using identity matrix."
-        dist_mut = Matrix{Float64}(I, size(PAE_mut))
+    # Initialize arrays to store values for each round
+    num_rounds = min(length(PAE_mut_rounds), length(PAE_wt_rounds))
+    if num_rounds == 0
+        @warn "No matching rounds found for mutation $mutation"
+        return 0.0
     end
+
+    # Calculate terms for each round and collect them
+    mut_terms = zeros(Float64, num_rounds, length(indices))
+    wt_terms = zeros(Float64, num_rounds, length(indices))
     
-    # For WT, use provided matrix if available, otherwise read it
-    if config.wt_dist_matrix !== nothing
-        dist_wt = config.wt_dist_matrix
-    else
+    for round_idx in 1:num_rounds
+        PAE_mut = PAE_mut_rounds[round_idx]
+        PAE_wt = PAE_wt_rounds[round_idx]
+        
+        # Get distance matrices for this round
+        local dist_mut, dist_wt
+        
+        # For mutant, read distance matrix for this round
         try
-            dist_wt = get_dist_map(config.datadir, config.wt_identifier, config.round_val)
+            dist_mut = get_dist_map(config.datadir, String(mutation), round_idx)
         catch e
-            # Fallback for testing or when files don't exist
-            @warn "Could not read WT distance matrix for $(config.wt_identifier): $e. Using identity matrix."
-            dist_wt = Matrix{Float64}(I, size(PAE_wt))
+            @warn "Could not read mutant distance matrix for $mutation round $round_idx: $e. Using identity matrix."
+            dist_mut = Matrix{Float64}(I, size(PAE_mut))
         end
-    end
-    
-    ΔΔS = 0.0
-    for i in indices
-        # Ensure distance matrices have the correct dimensions
-        if matrix_idx <= size(dist_mut, 1) && i <= size(dist_mut, 2) && 
-           matrix_idx <= size(dist_wt, 1) && i <= size(dist_wt, 2)
-            
-            # Get distances and ensure they're positive to avoid division by zero
-            d_mut = dist_mut[matrix_idx, i]
-            d_wt = dist_wt[matrix_idx, i]
-            
-            if d_mut > 0.0 && d_wt > 0.0
-                # Use PAE divided by distance squared
-                ΔΔS += abs(Γ[matrix_idx, i]) * (PAE_mut[matrix_idx, i]^(2-rho) / (d_mut^α) - PAE_wt[matrix_idx, i]^(2-rho) / (d_wt^α))
+        
+        # For WT, use pre-computed matrices if available, otherwise read from disk
+        if config.wt_dist_matrices !== nothing && round_idx <= length(config.wt_dist_matrices)
+            # Use pre-computed matrix for this round
+            dist_wt = config.wt_dist_matrices[round_idx]
+        else
+            try
+                dist_wt = get_dist_map(config.datadir, config.wt_identifier, round_idx)
+            catch e
+                @warn "Could not read WT distance matrix for $(config.wt_identifier) round $round_idx: $e. Using identity matrix."
+                dist_wt = Matrix{Float64}(I, size(PAE_wt))
+            end
+        end
+        
+        # Calculate terms for each index in this round
+        for (term_idx, i) in enumerate(indices)
+            if matrix_idx <= size(dist_mut, 1) && i <= size(dist_mut, 2) && 
+               matrix_idx <= size(dist_wt, 1) && i <= size(dist_wt, 2) &&
+               matrix_idx <= size(PAE_mut, 1) && i <= size(PAE_mut, 2) &&
+               matrix_idx <= size(PAE_wt, 1) && i <= size(PAE_wt, 2)
+                
+                d_mut = dist_mut[matrix_idx, i]
+                d_wt = dist_wt[matrix_idx, i]
+                
+                if d_mut > 0.0 && d_wt > 0.0
+                    # Store individual terms for averaging
+                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2-rho) / (d_mut^α)
+                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2-rho) / (d_wt^α)
+                end
             end
         end
     end
-    ΔΔS = ΔΔS ./ length(indices)
+    
+    # Average across rounds first, then subtract (as requested)
+    avg_mut_terms = mean(mut_terms, dims=1)[1, :]  # Average over rounds
+    avg_wt_terms = mean(wt_terms, dims=1)[1, :]    # Average over rounds
+    
+    # Calculate ΔΔS using the averaged terms
+    ΔΔS = 0.0
+    for (term_idx, i) in enumerate(indices)
+        ΔΔS += abs(Γ[matrix_idx, i]) * (avg_mut_terms[term_idx] - avg_wt_terms[term_idx])
+    end
+    
+    ΔΔS = ΔΔS / length(indices)
     return ΔΔS
 end
 
@@ -252,16 +292,16 @@ function ΔΔG_prime(A::Float64, ΔΔS::Float64, ΔΔG::Float64)
 end
 
 """
-    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, config::EntropyConfig; verbose::Bool=false)
+    calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Vector{Matrix{Float64}}, paes::Dict{String, Vector{Matrix{Float64}}}, ddG_exp::DataFrame, rho::Float64, A::Float64, config::EntropyConfig; verbose::Bool=false)
 
-Calculate the predicted ΔΔG values for a set of mutations.
+Calculate the predicted ΔΔG values for a set of mutations using multi-round data.
 
 # Arguments
 - `task_file_path::String`: Path to file containing list of mutations to analyze
 - `single_ddG::Dict{String, Float64}`: Dictionary mapping mutation strings to Rosetta ddG values
 - `pdb_path::String`: Path to the PDB file for computing the Gamma matrix
-- `WT_pae::Matrix{Float64}`: PAE matrix for wild-type protein
-- `paes::Dict{String, Matrix{Float64}}`: Dictionary mapping mutations to their PAE matrices
+- `WT_pae::Vector{Matrix{Float64}}`: Vector of PAE matrices for wild-type protein (one per round)
+- `paes::Dict{String, Vector{Matrix{Float64}}}`: Dictionary mapping mutations to their vectors of PAE matrices
 - `ddG_exp::DataFrame`: DataFrame containing experimental ddG values
 - `rho::Float64`: Parameter controlling contribution of PAE differences
 - `A::Float64`: Scaling parameter for entropy contribution
@@ -274,7 +314,7 @@ Calculate the predicted ΔΔG values for a set of mutations.
 - `ΔΔGs::Vector{Float64}`: Predicted total ddG values including entropy contribution
 - `r_ddGs::Vector{Float64}`: Original Rosetta ddG predictions
 """
-function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Matrix{Float64}, paes::Dict{String, Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, α::Float64, config::EntropyConfig; verbose::Bool=false)
+function calculate_ddgs(task_file_path::String, single_ddG::Dict{String, Float64}, pdb_path::String, WT_pae::Vector{Matrix{Float64}}, paes::Dict{String, Vector{Matrix{Float64}}}, ddG_exp::DataFrame, rho::Float64, A::Float64, α::Float64, config::EntropyConfig; verbose::Bool=false)
     # Compute Gamma matrix from PDB file
     coordinates = read_coordinates(pdb_path)
     Γ = compute_Γ(coordinates)
@@ -316,8 +356,8 @@ end
 
 """Process a single mutation and return the calculated values."""
 function process_single_mutation(mutation::AbstractString, position::Int, single_ddG::Dict{String, Float64}, 
-                                paes::Dict{String, Matrix{Float64}}, Γ::Matrix{Float64}, 
-                                WT_pae::Matrix{Float64}, ddG_exp::DataFrame, rho::Float64, A::Float64, α::Float64, 
+                                paes::Dict{String, Vector{Matrix{Float64}}}, Γ::Matrix{Float64}, 
+                                WT_pae::Vector{Matrix{Float64}}, ddG_exp::DataFrame, rho::Float64, A::Float64, α::Float64, 
                                 config::EntropyConfig, verbose::Bool=false)
     
     mutation_upper = uppercase(mutation)
@@ -328,9 +368,16 @@ function process_single_mutation(mutation::AbstractString, position::Int, single
         return nothing
     end
     
+    if !haskey(paes, mutation)
+        if verbose
+            println("Skipping variant: $mutation (no PAE data found)")
+        end
+        return nothing
+    end
+    
     ddG = single_ddG[mutation_upper]
-    pae = paes[mutation]
-    ΔΔS_val = ΔΔS(position, rho, α, Γ, pae, WT_pae, mutation, config)
+    pae_rounds = paes[mutation]
+    ΔΔS_val = ΔΔS(position, rho, α, Γ, pae_rounds, WT_pae, mutation, config)
     predicted_ddG = ΔΔG_prime(A, ΔΔS_val, ddG)
     experimental_ddG = get_experimental_ddg(ddG_exp, position, string(mutation_upper[end]))
     
