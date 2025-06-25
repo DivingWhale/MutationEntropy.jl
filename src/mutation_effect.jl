@@ -35,9 +35,36 @@ function _ensure_pdb_from_cif_if_needed(subfolder::String, model_pdb_path::Strin
     script_path = abspath(joinpath(@__DIR__, "convert.py"))
     subfolder_abs = abspath(subfolder)
     conda_env = "bio" # As used in the original code
-
-    cmd = `bash -c "source ~/.bashrc && conda activate $conda_env && python $script_path $subfolder_abs"`
     
+    # Find conda executable
+    conda_paths = [
+        "/opt/miniconda3/bin/conda",
+        "/opt/homebrew/bin/conda",
+        "/usr/local/bin/conda", 
+        "/Users/sam/miniconda3/bin/conda",
+        expanduser("~/miniconda3/bin/conda"),
+        expanduser("~/anaconda3/bin/conda")
+    ]
+    
+    conda_exe = nothing
+    for path in conda_paths
+        if isfile(path)
+            conda_exe = path
+            break
+        end
+    end
+    
+    if conda_exe === nothing
+        # Fallback: try to find conda in PATH
+        try
+            conda_exe = strip(read(`which conda`, String))
+        catch
+            error("Could not find conda executable. Please ensure conda is installed and accessible.")
+        end
+    end
+
+    cmd = `$conda_exe run -n $conda_env python $script_path $subfolder_abs`
+
     try
         run(cmd)
     catch e
