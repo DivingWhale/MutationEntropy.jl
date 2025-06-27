@@ -119,11 +119,65 @@ function get_structure_dimension(datadir::String, mutation::String, round_val::I
 end
 
 """
-    get_dist_map(datadir::String, mutation::String, round::Int)
+    get_dist_map(datadir::String, mutation::String, round::Int; cache_manager::Union{CacheManager, Nothing}=nothing)
 
-Calculate the distance map for a specific mutation and round.
+Calculate the distance map for a specific mutation and round with new caching system.
+Uses per-mutation caching where all rounds are stored together in a single file.
 """
-function get_dist_map(datadir::String, mutation::String, round_val::Int) # Renamed round
+function get_dist_map(datadir::String, mutation::String, round_val::Int; cache_manager::Union{CacheManager, Nothing}=nothing)
+    # If cache manager is provided, try to load from cache first
+    if cache_manager !== nothing
+        # Try to load all rounds for this mutation from cache
+        cached_matrices = load_cached_data(cache_manager, mutation, :distance)
+        
+        if cached_matrices !== nothing && round_val <= length(cached_matrices)
+            # Return the specific round from cached data
+            return cached_matrices[round_val]
+        end
+        
+        # If not in cache or round doesn't exist, compute all rounds and cache them
+        try
+            dist_matrices = Vector{Matrix{Float64}}()
+            
+            # Find out how many rounds exist for this mutation
+            max_rounds = 20  # Default assumption, could be made configurable
+            actual_rounds = 0
+            
+            for r in 1:max_rounds
+                try
+                    dist_matrix = compute_single_distance_matrix(datadir, mutation, r)
+                    push!(dist_matrices, dist_matrix)
+                    actual_rounds = r
+                catch
+                    break  # No more rounds available
+                end
+            end
+            
+            if actual_rounds > 0
+                # Save all computed rounds to cache
+                save_cached_data(cache_manager, mutation, :distance, dist_matrices)
+                
+                # Return the requested round if it exists
+                if round_val <= length(dist_matrices)
+                    return dist_matrices[round_val]
+                end
+            end
+        catch e
+            @warn "Failed to compute distance matrices for $mutation: $e"
+        end
+    end
+    
+    # Fallback: compute single matrix directly
+    return compute_single_distance_matrix(datadir, mutation, round_val)
+end
+
+"""
+    compute_single_distance_matrix(datadir::String, mutation::String, round_val::Int)
+
+Compute a single distance matrix for a specific mutation and round.
+This is a helper function that handles the core computation logic.
+"""
+function compute_single_distance_matrix(datadir::String, mutation::String, round_val::Int)
     # Construct the base directory path
     base_dir = joinpath(datadir, "$(mutation)_$(round_val)")
     
@@ -341,47 +395,14 @@ end
     read_pae(datadir::String, mutation::String, round::Int)
 
 Read the Predicted Aligned Error (PAE) matrix.
+Wrapper around read_single_pae from entropy.jl for backward compatibility.
 """
-function read_pae(datadir::String, mutation::String, round_val::Int) # Renamed round
-    # Construct the base directory path
-    base_dir = joinpath(datadir, "$(mutation)_$(round_val)")
-    
-    # Use glob with relative pattern from the base directory
-    subfolder_pattern = "seed-*_sample-0"
-    
-    if !isdir(base_dir)
-        error("Base directory not found: $base_dir for $mutation round $round_val")
+function read_pae(datadir::String, mutation::String, round_val::Int)
+    result = read_single_pae(datadir, mutation, round_val)
+    if result === nothing
+        error("PAE data not found for $mutation round $round_val")
     end
-    
-    subfolders = glob(subfolder_pattern, base_dir)
-    # Convert relative paths to absolute paths
-    subfolders = [joinpath(base_dir, sf) for sf in subfolders]
-    
-    if isempty(subfolders)
-        error("No matching folder found for $mutation round $round_val: $subfolder_pattern in $base_dir")
-    end
-    
-    subfolder = subfolders[1]
-    confidence_file = joinpath(subfolder, "confidences.json")
-    
-    if !isfile(confidence_file)
-        error("Confidence file not found for $mutation round $round_val: $confidence_file")
-    end
-    
-    try
-        raw_data = JSON.parsefile(confidence_file)
-        pae_any = raw_data["pae"] # Expected: Vector of Vectors (rows)
-        
-        # Original conversion logic using map and hcat
-        pae_matrix_rows = map(row -> map(Float64, row), pae_any) # Convert inner elements to Float64
-        pae_matrix = Matrix(hcat(pae_matrix_rows...)') # Convert Vector{Vector} to Matrix
-        
-        return pae_matrix
-        
-    catch e
-        # Original error message structure
-        error("Error processing PAE data for $mutation round $round_val: $e")
-    end
+    return result
 end
 
 """
