@@ -51,10 +51,10 @@ function read_ddG_file(ddGPath::String)
                 break
             end
             if WT_flag
-                native_score = mean([parse(Float64, split(line)[4]) for line in cur_lines])
+                native_score = mean([parse(Float64, split(line)[4]) - parse(Float64, split(line)[8]) for line in cur_lines])
                 WT_flag = false
             else
-                mut_ene = mean([parse(Float64, split(line)[4]) for line in cur_lines])
+                mut_ene = mean([parse(Float64, split(line)[4]) - parse(Float64, split(line)[8]) for line in cur_lines])
                 ddG = mut_ene - native_score
             end
         end
