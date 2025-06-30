@@ -193,18 +193,14 @@ Configuration for entropy calculations.
 struct EntropyConfig
     datadir::String
     wt_identifier::String
-    wt_dist_matrices::Union{Vector{Matrix{Float64}},Nothing}
-    mut_dist_matrices::Union{Dict{String,Vector{Matrix{Float64}}},Nothing}
     offset::Int
 
     function EntropyConfig(
         datadir::String;
         wt_identifier::String = "WT",
-        wt_dist_matrices::Union{Vector{Matrix{Float64}},Nothing} = nothing,
-        mut_dist_matrices::Union{Dict{String,Vector{Matrix{Float64}}},Nothing} = nothing,
         offset::Int = 0,
     )
-        new(datadir, wt_identifier, wt_dist_matrices, mut_dist_matrices, offset)
+        new(datadir, wt_identifier, offset)
     end
 end
 
@@ -216,7 +212,6 @@ Calculates the change in entropy (ΔΔS) for a given mutation.
 function ΔΔS(
     position::Int,
     rho::Float64,
-    α::Float64,
     Γ::Matrix{Float64},
     PAE_mut_rounds::Vector{Matrix{Float64}},
     PAE_wt_rounds::Vector{Matrix{Float64}},
@@ -240,43 +235,12 @@ function ΔΔS(
         PAE_mut = PAE_mut_rounds[round_idx]
         PAE_wt = PAE_wt_rounds[round_idx]
 
-        dist_mut = if config.mut_dist_matrices !== nothing && 
-                      haskey(config.mut_dist_matrices, String(mutation)) && 
-                      round_idx <= length(config.mut_dist_matrices[String(mutation)])
-            config.mut_dist_matrices[String(mutation)][round_idx]
-        else
-            try
-                get_dist_map(config.datadir, String(mutation), round_idx; cache_manager)
-            catch e
-                @warn "Could not read mutant distance matrix for $mutation round $round_idx: $e. Using identity matrix."
-                Matrix{Float64}(I, size(PAE_mut))
-            end
-        end
-
-        dist_wt = if config.wt_dist_matrices !== nothing && round_idx <= length(config.wt_dist_matrices)
-            config.wt_dist_matrices[round_idx]
-        else
-            try
-                get_dist_map(config.datadir, config.wt_identifier, round_idx; cache_manager)
-            catch e
-                @warn "Could not read WT distance matrix for $(config.wt_identifier) round $round_idx: $e. Using identity matrix."
-                Matrix{Float64}(I, size(PAE_wt))
-            end
-        end
-
         for (term_idx, i) in enumerate(indices)
-            if checkbounds(Bool, dist_mut, matrix_idx, i) &&
-               checkbounds(Bool, dist_wt, matrix_idx, i) &&
-               checkbounds(Bool, PAE_mut, matrix_idx, i) &&
+            if checkbounds(Bool, PAE_mut, matrix_idx, i) &&
                checkbounds(Bool, PAE_wt, matrix_idx, i)
                 
-                d_mut = dist_mut[matrix_idx, i]
-                d_wt = dist_wt[matrix_idx, i]
-
-                if d_mut > 0.0 && d_wt > 0.0
-                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - rho) / (d_mut^α)
-                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - rho) / (d_wt^α)
-                end
+                mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - rho)
+                wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - rho)
             end
         end
     end
@@ -313,7 +277,6 @@ function calculate_ddgs(
     ddG_exp::DataFrame,
     rho::Float64,
     A::Float64,
-    α::Float64,
     config::EntropyConfig;
     verbose::Bool = false,
     cache_manager::Union{CacheManager,Nothing} = nothing,
@@ -325,7 +288,7 @@ function calculate_ddgs(
 
     for m in mutations
         position = parse_mutation_position(m)
-        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, α, config, verbose; cache_manager)
+        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, config, verbose; cache_manager)
         
         if result !== nothing && !isnan(last(result))
             push!(results, result)
@@ -375,7 +338,6 @@ function process_single_mutation(
     ddG_exp::DataFrame,
     rho::Float64,
     A::Float64,
-    α::Float64,
     config::EntropyConfig,
     verbose::Bool;
     cache_manager::Union{CacheManager,Nothing},
@@ -401,7 +363,7 @@ function process_single_mutation(
     ddG = single_ddG[mutation_upper]
     pae_rounds = paes[mutation]
     
-    ΔΔS_val = ΔΔS(position, rho, α, Γ, pae_rounds, WT_pae, mutation, config; cache_manager)
+    ΔΔS_val = ΔΔS(position, rho, Γ, pae_rounds, WT_pae, mutation, config; cache_manager)
     predicted_ddG = ΔΔG_prime(A, ΔΔS_val, ddG)
     
     return (experimental_ddG, predicted_ddG, ddG)
