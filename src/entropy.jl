@@ -406,3 +406,140 @@ function process_single_mutation(
     
     return (experimental_ddG, predicted_ddG, ddG)
 end
+
+"""
+    get_residue_calpha_b_factor(pdb_file_path)
+
+Reads C-alpha B-factors from a PDB file and returns a dictionary mapping residue identifiers to B-factor values.
+"""
+function get_residue_calpha_b_factor(pdb_file_path::String)::Dict{String,Float64}
+    residue_calpha_b_factors = Dict{String,Float64}()
+    try
+        struc = read(pdb_file_path, PDBFormat)
+        for residue in collectresidues(struc, standardselector)
+            calpha_atom = nothing
+            for atom_pair in atoms(residue)
+                atom = atom_pair[2]  # Extract the atom from the pair
+                if strip(String(atom_pair[1])) == "CA"  # atom_pair[1] is the atom name
+                    calpha_atom = atom
+                    break
+                end
+            end
+            if calpha_atom !== nothing
+                residue_id = "$(resname(residue)) $(resnumber(residue)) $(chainid(residue))"
+                residue_calpha_b_factors[residue_id] = tempfactor(calpha_atom)
+            end
+        end
+    catch e
+        @warn "Error reading PDB file: $e"
+    end
+    return residue_calpha_b_factors
+end
+
+"""
+    optimize_gamma_parameters(coordinates, experimental_msf; verbose=false)
+
+Optimizes Gamma kernel function parameters {η₁, κ₁, η₂, κ₂} to maximize Pearson correlation 
+coefficient between theoretical and experimental MSF values.
+
+# Arguments
+- `coordinates::AbstractVector{<:AbstractVector{<:Real}}`: A vector of 3D coordinates for each atom.
+- `experimental_msf::Vector{Float64}`: Experimental MSF (B-factor) values.
+- `verbose::Bool`: Whether to print progress information.
+
+# Returns
+- `NamedTuple`: Best parameters and maximum PCC value.
+"""
+function optimize_gamma_parameters(
+    coordinates::AbstractVector{<:AbstractVector{<:Real}},
+    experimental_msf::Vector{Float64};
+    verbose::Bool = false
+)::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2, :max_pcc), NTuple{5,Float64}}
+    
+    # Parameter ranges
+    eta1_range = 1:30
+    kappa1_range = 1:12
+    eta2_range = 1:20
+    kappa2_range = 1:12
+    
+    max_pcc = 0.0
+    best_params = (eta1=1.0, kappa1=1.0, eta2=1.0, kappa2=1.0, max_pcc=0.0)
+    
+    total_combinations = length(eta1_range) * length(kappa1_range) * length(eta2_range) * length(kappa2_range)
+    current_iteration = 0
+    
+    verbose && println("Starting parameter optimization with $total_combinations combinations...")
+    
+    for eta1 in eta1_range, kappa1 in kappa1_range, eta2 in eta2_range, kappa2 in kappa2_range
+        current_iteration += 1
+        
+        # Calculate Gamma matrices
+        Γ1 = Γ(coordinates, eta1, kappa1)
+        Γ2 = Γ(coordinates, eta2, kappa2)
+        Γ_total = Γ1 + Γ2
+        
+        # Calculate theoretical MSF
+        theoretical_msf = msf(Γ_total)
+        
+        # Calculate Pearson correlation coefficient
+        pcc = cor(theoretical_msf, experimental_msf)
+        
+        # Update best parameters if PCC improved
+        if pcc > max_pcc
+            max_pcc = pcc
+            best_params = (eta1=Float64(eta1), kappa1=Float64(kappa1), 
+                          eta2=Float64(eta2), kappa2=Float64(kappa2), max_pcc=max_pcc)
+            verbose && println("New best PCC: $max_pcc with params η₁=$eta1, κ₁=$kappa1, η₂=$eta2, κ₂=$kappa2")
+        end
+        
+        # Progress update
+        if verbose && current_iteration % 1000 == 0
+            progress = round(current_iteration / total_combinations * 100, digits=1)
+            println("Progress: $progress% ($current_iteration/$total_combinations)")
+        end
+    end
+    
+    verbose && println("Optimization complete. Best PCC: $max_pcc")
+    return best_params
+end
+
+"""
+    fit_gamma_to_bfactor(pdb_file_path; verbose=false)
+
+Convenience function to fit Gamma kernel parameters using B-factor data from a PDB file.
+
+# Arguments
+- `pdb_file_path::String`: Path to the PDB file.
+- `verbose::Bool`: Whether to print progress information.
+
+# Returns
+- `NamedTuple`: Best parameters and maximum PCC value.
+"""
+function fit_gamma_to_bfactor(pdb_file_path::String; verbose::Bool = false)::NamedTuple
+    # Read coordinates and B-factors
+    coordinates = read_coordinates(pdb_file_path)
+    b_factors_dict = get_residue_calpha_b_factor(pdb_file_path)
+    
+    verbose && println("Found $(length(b_factors_dict)) residues with B-factor data")
+    
+    # Extract B-factor values in residue order
+    experimental_msf = Float64[]
+    structure = read(pdb_file_path, PDBFormat)
+    
+    for residue in collectresidues(structure, standardselector)
+        residue_id = "$(resname(residue)) $(resnumber(residue)) $(chainid(residue))"
+        if haskey(b_factors_dict, residue_id)
+            push!(experimental_msf, b_factors_dict[residue_id])
+        else
+            verbose && println("No B-factor found for residue: $residue_id")
+        end
+    end
+    
+    if length(experimental_msf) != length(coordinates)
+        error("Mismatch between number of coordinates ($(length(coordinates))) and B-factors ($(length(experimental_msf))). Check if B-factor data is available in the PDB file.")
+    end
+    
+    verbose && println("Loaded $(length(experimental_msf)) residues for optimization.")
+    
+    return optimize_gamma_parameters(coordinates, experimental_msf; verbose=verbose)
+end

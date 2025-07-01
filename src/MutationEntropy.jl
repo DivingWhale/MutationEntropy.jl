@@ -14,6 +14,8 @@ using Printf
 
 # Core functionality exports
 export read_coordinates, read_xvg, calculate_ddgs, EntropyConfig, ΔΔS
+export Φ, Γ, compute_Γ, msf
+export get_residue_calpha_b_factor, optimize_gamma_parameters, fit_gamma_to_bfactor
 
 # New cache system exports
 export CacheManager, get_cache_manager
