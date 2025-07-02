@@ -38,14 +38,27 @@ function Γ(coordinates::AbstractVector{<:AbstractVector{<:Real}}, η::Integer, 
 end
 
 """
+    compute_Γ(coordinates, gamma_params)
+
+Computes the final Γ matrix by combining results from configurable parameter sets.
+"""
+function compute_Γ(
+    coordinates::AbstractVector{<:AbstractVector{<:Real}}, 
+    gamma_params::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2), NTuple{4,Int}}
+)::Matrix{Float64}
+    Γ1 = Γ(coordinates, gamma_params.eta1, gamma_params.kappa1)
+    Γ2 = Γ(coordinates, gamma_params.eta2, gamma_params.kappa2)
+    return Γ1 + Γ2
+end
+
+"""
     compute_Γ(coordinates)
 
-Computes the final Γ matrix by combining results from two different parameter sets.
+Computes the final Γ matrix using default parameters for backward compatibility.
 """
 function compute_Γ(coordinates::AbstractVector{<:AbstractVector{<:Real}})::Matrix{Float64}
-    Γ1 = Γ(coordinates, 20, 7)
-    Γ2 = Γ(coordinates, 13, 10)
-    return Γ1 + Γ2
+    default_params = (eta1=20, kappa1=7, eta2=13, kappa2=10)
+    return compute_Γ(coordinates, default_params)
 end
 
 """
@@ -194,11 +207,13 @@ struct EntropyConfig
     datadir::String
     wt_identifier::String
     offset::Int
+    gamma_params::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2), NTuple{4,Int}}
 
     function EntropyConfig(
         datadir::String;
         wt_identifier::String = "WT",
         offset::Int = 0,
+        gamma_params::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2), NTuple{4,Int}} = (eta1=20, kappa1=7, eta2=13, kappa2=10),
     )
         new(datadir, wt_identifier, offset)
     end
@@ -282,7 +297,7 @@ function calculate_ddgs(
     cache_manager::Union{CacheManager,Nothing} = nothing,
 )::Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}
     coordinates = read_coordinates(pdb_path)
-    Γ = compute_Γ(coordinates)
+    Γ = compute_Γ(coordinates, config.gamma_params)
     mutations = read_mutations_from_file(task_file_path)
     results = Vector{Tuple{Float64,Float64,Float64}}()
 
