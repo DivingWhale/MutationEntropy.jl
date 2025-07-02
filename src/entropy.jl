@@ -38,13 +38,13 @@ function Γ(coordinates::AbstractVector{<:AbstractVector{<:Real}}, η::Integer, 
 end
 
 """
-    compute_Γ(coordinates, config)
+    compute_Γ(coordinates)
 
-Computes the final Γ matrix by combining results from two different parameter sets using config parameters.
+Computes the final Γ matrix by combining results from two different parameter sets.
 """
-function compute_Γ(coordinates::AbstractVector{<:AbstractVector{<:Real}}, config::EntropyConfig)::Matrix{Float64}
-    Γ1 = Γ(coordinates, config.eta1, config.kappa1)
-    Γ2 = Γ(coordinates, config.eta2, config.kappa2)
+function compute_Γ(coordinates::AbstractVector{<:AbstractVector{<:Real}})::Matrix{Float64}
+    Γ1 = Γ(coordinates, 20, 7)
+    Γ2 = Γ(coordinates, 13, 10)
     return Γ1 + Γ2
 end
 
@@ -196,23 +196,15 @@ struct EntropyConfig
     wt_dist_matrices::Union{Vector{Matrix{Float64}},Nothing}
     mut_dist_matrices::Union{Dict{String,Vector{Matrix{Float64}}},Nothing}
     offset::Int
-    eta1::Int
-    kappa1::Int
-    eta2::Int
-    kappa2::Int
 
     function EntropyConfig(
-        datadir::String,
-        eta1::Int,
-        kappa1::Int,
-        eta2::Int,
-        kappa2::Int;
+        datadir::String;
         wt_identifier::String = "WT",
         wt_dist_matrices::Union{Vector{Matrix{Float64}},Nothing} = nothing,
         mut_dist_matrices::Union{Dict{String,Vector{Matrix{Float64}}},Nothing} = nothing,
         offset::Int = 0,
     )
-        new(datadir, wt_identifier, wt_dist_matrices, mut_dist_matrices, offset, eta1, kappa1, eta2, kappa2)
+        new(datadir, wt_identifier, wt_dist_matrices, mut_dist_matrices, offset)
     end
 end
 
@@ -327,7 +319,7 @@ function calculate_ddgs(
     cache_manager::Union{CacheManager,Nothing} = nothing,
 )::Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}
     coordinates = read_coordinates(pdb_path)
-    Γ = compute_Γ(coordinates, config)
+    Γ = compute_Γ(coordinates)
     mutations = read_mutations_from_file(task_file_path)
     results = Vector{Tuple{Float64,Float64,Float64}}()
 
@@ -550,32 +542,4 @@ function fit_gamma_to_bfactor(pdb_file_path::String; verbose::Bool = false)::Nam
     verbose && println("Loaded $(length(experimental_msf)) residues for optimization.")
     
     return optimize_gamma_parameters(coordinates, experimental_msf; verbose=verbose)
-end
-
-"""
-    create_config_from_optimization(datadir, optimization_result; kwargs...)
-
-Create an EntropyConfig from gamma parameter optimization results.
-
-# Arguments
-- `datadir::String`: Data directory path.
-- `optimization_result::NamedTuple`: Result from optimize_gamma_parameters.
-- `kwargs...`: Additional arguments for EntropyConfig constructor.
-
-# Returns
-- `EntropyConfig`: Configuration with optimized gamma parameters.
-"""
-function create_config_from_optimization(
-    datadir::String,
-    optimization_result::NamedTuple;
-    kwargs...
-)::EntropyConfig
-    return EntropyConfig(
-        datadir;
-        eta1=round(Int, optimization_result.eta1),
-        kappa1=round(Int, optimization_result.kappa1),
-        eta2=round(Int, optimization_result.eta2),
-        kappa2=round(Int, optimization_result.kappa2),
-        kwargs...
-    )
 end
