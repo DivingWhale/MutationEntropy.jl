@@ -348,7 +348,7 @@ function get_low_plddt_residues(mutation::String, round_val::Int, datadir::Strin
                 
                 if atom_count > 0 && !haskey(residue_plddts, res_id)
                     # Ensure atom_idx_tracker and atom_count do not exceed atom_plddts bounds
-                    if atom_idx_tracker + atom_count - 1 <= length(atom_plddts)
+                    if atom_idx_tracker + atom_count - 1 <= lastindex(atom_plddts)
                         plddt_scores_for_residue = view(atom_plddts, atom_idx_tracker:(atom_idx_tracker + atom_count - 1))
                         residue_plddts[res_id] = mean(plddt_scores_for_residue)
                     else
@@ -379,30 +379,16 @@ Original logic: `x -> x < distance`. This includes the residue itself (dist 0)
 and potentially others if distance is very small.
 """
 function find_residues_within_distance(residue_id::Int, d_matrix::Matrix{Float64}; distance::Float64=13.0)
-    if !(1 <= residue_id <= size(d_matrix, 1))
-        @warn "Residue ID $residue_id is out of bounds for distance matrix row access (max rows: $(size(d_matrix,1))). Returning empty list."
-        return Int[]
-    end
+    # if !(1 <= residue_id <= size(d_matrix, 1))
+    #     @warn "Residue ID $residue_id is out of bounds for distance matrix row access (max rows: $(size(d_matrix,1))). Returning empty list."
+    #     return Int[]
+    # end
     # Original logic: findall(x -> x < distance, d_matrix[residue_id, :])
     # This includes self-distance (0.0) if distance > 0.
     # Subsequent code (calculate_strain, collect_strains) handles `if residue == site; continue; end`.
     nearby_indices = findall(x -> x < distance, d_matrix[residue_id, :])
     
     return sort(nearby_indices) # Returns sorted Vector{Int}
-end
-
-"""
-    read_pae(datadir::String, mutation::String, round::Int)
-
-Read the Predicted Aligned Error (PAE) matrix.
-Wrapper around read_single_pae from entropy.jl for backward compatibility.
-"""
-function read_pae(datadir::String, mutation::String, round_val::Int)
-    result = read_single_pae(datadir, mutation, round_val)
-    if result === nothing
-        error("PAE data not found for $mutation round $round_val")
-    end
-    return result
 end
 
 """
@@ -447,11 +433,11 @@ function calculate_strain(alpha::Float64, pae::Matrix{Float64}, d_matrix::Matrix
         valid_neighbors_for_sum += 1
     end
 
-    if length(nearby_residues) > 0
+    if length(nearby_residues) > 1
         strain = strain / (length(nearby_residues) - 1) # Exclude self from average
     else
         strain = 0.0 # Or handle as an error, or return NaN
-        @warn "No residues found by find_residues_within_distance for site $site to average strain. Strain set to 0."
+        @warn "No valid neighbors found for site $site to average strain. Strain set to 0."
     end
 
     return strain
@@ -476,7 +462,7 @@ function collect_strains(datadir::String, protein::String;
         try
             dists_r1 = get_dist_map(datadir, protein, 1)
             # Ensure it's a collection (e.g., Vector) for `filter` compatibility later
-            effective_residue_range = collect(1:size(dists_r1, 1)) 
+            effective_residue_range = collect(axes(dists_r1, 1)) 
             if verbose
                 println("Residue range not provided, using full range: $(first(effective_residue_range)) to $(last(effective_residue_range))")
             end

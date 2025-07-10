@@ -4,11 +4,13 @@ const AA = collect(values(RES_DICT))
 # 简单的缓存机制
 const FILE_CACHE = Dict{String, Tuple{Float64, Float64}}()  # path -> (ddG, mtime)
 const DIR_CACHE = Dict{String, Tuple{Dict{String, Float64}, Float64}}()  # path -> (ddGs, mtime)
+const VARIANT_CACHE = Dict{Tuple{String, String}, Tuple{Float64, Float64}}() # (base_dir, variant_name) -> (ddG, mtime)
 
 # 清理缓存的辅助函数
 function clear_cache!()
     empty!(FILE_CACHE)
     empty!(DIR_CACHE)
+    empty!(VARIANT_CACHE)
 end
 
 # 定义 extract_parts 函数
@@ -98,4 +100,57 @@ function read_ddGs(file_path::String)
     # 缓存结果
     DIR_CACHE[file_path] = (ddGs, stat(file_path).mtime)
     return ddGs
+end
+
+"""
+    read_single_ddG(base_dir::String, variant_name::String)
+
+Reads the ddG value for a single, specified variant from its subdirectory, using a dedicated cache for single variants.
+
+# Arguments
+- `base_dir::String`: The base directory containing all variant subdirectories.
+- `variant_name::String`: The name of the variant subdirectory (e.g., "A123G").
+
+# Returns
+- `Union{Float64, Nothing}`: The calculated ddG value if found, otherwise `nothing`.
+"""
+function read_single_ddG(base_dir::String, variant_name::String)::Union{Float64, Nothing}
+    # 确保变体名称格式与 read_ddGs 函数的逻辑一致
+    if !occursin(r"^[A-Z]\d+[A-Z]$", variant_name)
+        @warn "Invalid variant name format: $variant_name"
+        return nothing
+    end
+
+    variant_dir = joinpath(base_dir, variant_name)
+    cache_key = (base_dir, variant_name)
+
+    # 检查目录是否存在
+    if !isdir(variant_dir)
+        return nothing # 如果目录不存在，则该变体不存在，静默返回
+    end
+
+    # 查找 .ddg 文件以检查修改时间
+    ddg_files = glob("*.ddg", variant_dir)
+    if isempty(ddg_files)
+        @warn "No .ddg file found for variant $variant_name in $variant_dir"
+        return nothing
+    end
+    ddg_path = first(ddg_files)
+    current_mtime = stat(ddg_path).mtime
+
+    # 检查缓存
+    if haskey(VARIANT_CACHE, cache_key)
+        cached_ddG, cached_mtime = VARIANT_CACHE[cache_key]
+        if current_mtime == cached_mtime
+            return cached_ddG
+        end
+    end
+
+    # 如果缓存未命中或文件已更新，则读取文件
+    ddG = read_ddG_file(ddg_path)
+
+    # 存储到缓存
+    VARIANT_CACHE[cache_key] = (ddG, current_mtime)
+    
+    return ddG
 end

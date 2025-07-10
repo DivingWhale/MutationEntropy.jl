@@ -1,67 +1,4 @@
 """
-    Φ(r, η, κ)
-
-Computes the pairwise interaction strength based on a generalized exponential function.
-"""
-Φ(r::Real, η::Real, κ::Real)::Float64 = exp(-(r / η)^κ)
-
-"""
-    Γ(coordinates, η, κ)
-
-Constructs the Γ matrix, a key component in modeling protein dynamics, from atomic coordinates.
-
-# Arguments
-- `coordinates::AbstractVector{<:AbstractVector{<:Real}}`: A vector of 3D coordinates for each atom.
-- `η::Integer`: Scaling parameter for the distance.
-- `κ::Integer`: Exponent parameter determining the shape of the interaction falloff.
-
-# Returns
-- `Matrix{Float64}`: The computed Γ matrix.
-"""
-function Γ(coordinates::AbstractVector{<:AbstractVector{<:Real}}, η::Integer, κ::Integer)::Matrix{Float64}
-    natoms = length(coordinates)
-    Γ_matrix = zeros(Float64, natoms, natoms)
-
-    for i in 1:natoms, j in (i+1):natoms
-        dist = norm(coordinates[i] - coordinates[j])
-        interaction = -Φ(dist, η, κ)
-        Γ_matrix[i, j] = interaction
-        Γ_matrix[j, i] = interaction  # Exploiting symmetry
-    end
-
-    # Diagonal elements are the negative sum of the off-diagonal elements in each column
-    for i in 1:natoms
-        Γ_matrix[i, i] = -sum(view(Γ_matrix, :, i))
-    end
-
-    return Γ_matrix
-end
-
-"""
-    compute_Γ(coordinates, gamma_params)
-
-Computes the final Γ matrix by combining results from configurable parameter sets.
-"""
-function compute_Γ(
-    coordinates::AbstractVector{<:AbstractVector{<:Real}}, 
-    gamma_params::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2), NTuple{4,Int}}
-)::Matrix{Float64}
-    Γ1 = Γ(coordinates, gamma_params.eta1, gamma_params.kappa1)
-    Γ2 = Γ(coordinates, gamma_params.eta2, gamma_params.kappa2)
-    return Γ1 + Γ2
-end
-
-"""
-    compute_Γ(coordinates)
-
-Computes the final Γ matrix using default parameters for backward compatibility.
-"""
-function compute_Γ(coordinates::AbstractVector{<:AbstractVector{<:Real}})::Matrix{Float64}
-    default_params = (eta1=20, kappa1=7, eta2=13, kappa2=10)
-    return compute_Γ(coordinates, default_params)
-end
-
-"""
     read_coordinates(filename)
 
 Reads CA atom coordinates from a PDB file.
@@ -91,19 +28,14 @@ function read_xvg(filename::String)::Vector{Tuple{Int, Float64}}
     return results
 end
 
-"""
-    msf(Γ)
 
-Calculates the mean square fluctuation from the Γ matrix.
-"""
-msf(Γ::AbstractMatrix{<:Real})::Vector{Float64} = diag(pinv(Γ))
 
 """
-    read_single_pae(data_path, mutation, round_val)
+    read_round_pae(data_path, mutation, round_val)
 
-Reads a single Predicted Aligned Error (PAE) matrix from a specified directory.
+Reads a single Predicted Aligned Error (PAE) matrix for a specific round from a directory.
 """
-function read_single_pae(data_path::String, mutation::AbstractString, round_val::Int)::Union{Matrix{Float64}, Nothing}
+function read_round_pae(data_path::String, mutation::AbstractString, round_val::Int)::Union{Matrix{Float64}, Nothing}
     round_dir = joinpath(data_path, "$(mutation)_$(round_val)")
     !isdir(round_dir) && return nothing
 
@@ -127,7 +59,7 @@ end
 """
     read_paes(task_file_path, source_data_path; ...)
 
-Reads all PAE matrices for a list of mutations, utilizing a cache to avoid redundant reads.
+Reads all PAE matrices for a list of mutations from a task file, utilizing a cache.
 """
 function read_paes(
     task_file_path::String,
@@ -167,7 +99,7 @@ function read_paes(
         Threads.@threads for mutation in mutations_to_process
             pae_matrices = Vector{Matrix{Float64}}()
             for round_idx in 1:num_rounds
-                round_pae = read_single_pae(source_data_path, mutation, round_idx)
+                round_pae = read_round_pae(source_data_path, mutation, round_idx)
                 round_pae !== nothing && push!(pae_matrices, round_pae)
             end
 
@@ -199,86 +131,156 @@ function read_paes(
 end
 
 """
-    EntropyConfig
+    get_variant_paes(mutation, source_data_path; ...)
 
-Configuration for entropy calculations.
+Gets all PAE matrices for a single variant, utilizing a cache.
 """
-struct EntropyConfig
-    datadir::String
-    wt_identifier::String
-    wt_dist_matrices::Union{Vector{Matrix{Float64}},Nothing}
-    mut_dist_matrices::Union{Dict{String,Vector{Matrix{Float64}}},Nothing}
-    offset::Int
-    gamma_params::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2), NTuple{4,Int}}
-
-    function EntropyConfig(
-        datadir::String;
-        wt_identifier::String = "WT",
-        wt_dist_matrices::Union{Vector{Matrix{Float64}},Nothing} = nothing,
-        mut_dist_matrices::Union{Dict{String,Vector{Matrix{Float64}}},Nothing} = nothing,
-        offset::Int = 0,
-        gamma_params::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2), NTuple{4,Int}} = (eta1=20, kappa1=7, eta2=13, kappa2=10),
-    )
-        new(datadir, wt_identifier, wt_dist_matrices, mut_dist_matrices, offset, gamma_params)
+function get_variant_paes(
+    mutation::String,
+    source_data_path::String;
+    verbose::Bool = false,
+    num_rounds::Int = 20,
+    cache_manager::Union{CacheManager,Nothing} = nothing,
+)::Tuple{Union{Vector{Matrix{Float64}}, Nothing}, CacheManager}
+    if cache_manager === nothing
+        cache_dir = joinpath(source_data_path, "cache")
+        cache_manager = get_cache_manager(cache_dir)
     end
+
+    # Check cache for existing data
+    cached_pae = load_cached_data(cache_manager, mutation, :pae)
+    if cached_pae !== nothing
+        verbose && println("Loaded $mutation from cache.")
+        return cached_pae, cache_manager
+    end
+
+    # If not in cache, read from source
+    verbose && println("Cache miss for $mutation. Reading from source.")
+    pae_matrices = Vector{Matrix{Float64}}()
+    for round_idx in 1:num_rounds
+        round_pae = read_round_pae(source_data_path, mutation, round_idx)
+        round_pae !== nothing && push!(pae_matrices, round_pae)
+    end
+
+    if isempty(pae_matrices)
+        verbose && @warn "No PAE data found for $mutation."
+        return nothing
+    end
+
+    # Save to cache and return
+    verbose && println("Saving $mutation to cache.")
+    save_cached_data(cache_manager, mutation, :pae, pae_matrices)
+    
+    return pae_matrices, cache_manager
 end
 
 """
-    ΔΔS(position, rho, α, Γ, PAE_mut_rounds, PAE_wt_rounds, mutation, config; ...)
+    MutationData
 
-Calculates the change in entropy (ΔΔS) for a given mutation.
+Contains all matrices and identifiers for a single mutation analysis.
 """
-function ΔΔS(
-    position::Int,
-    rho::Float64,
-    α::Float64,
-    Γ::Matrix{Float64},
-    PAE_mut_rounds::Vector{Matrix{Float64}},
-    PAE_wt_rounds::Vector{Matrix{Float64}},
-    mutation::AbstractString,
-    config::EntropyConfig;
-    cache_manager::Union{CacheManager,Nothing} = nothing,
-)::Float64
-    matrix_idx = position - config.offset
-    indices = findall(x -> abs(x) > 1e-5, Γ[matrix_idx, :])
-    num_rounds = min(length(PAE_mut_rounds), length(PAE_wt_rounds))
+struct MutationData
+    wt_pae::Vector{Matrix{Float64}}
+    mutant_pae::Vector{Matrix{Float64}}
+    wt_dist::Vector{Matrix{Float64}}
+    mutant_dist::Vector{Matrix{Float64}}
+    mutation::String
+end
 
-    if num_rounds == 0
-        @warn "No matching rounds for mutation $mutation."
-        return 0.0
+"""
+    EntropyParams
+
+Parameters for entropy calculation.
+"""
+struct EntropyParams
+    position::Int
+    rho::Float64
+    α::Float64
+    offset::Int
+    filter_low_plddt::Bool
+    plddt_threshold::Float64
+    data_dir::String
+end
+
+
+
+"""
+    find_stable_neighbors(matrix_idx::Int, distance_matrices::Vector{Matrix{Float64}}, mutation::String)
+
+Find residues that are within 13Å in all rounds.
+"""
+function find_stable_neighbors(matrix_idx::Int, distance_matrices::Vector{Matrix{Float64}}, mutation::String)::Vector{Int}
+    all_round_indices = Vector{Vector{Int}}()
+    
+    for dist_matrix in distance_matrices
+        round_indices = find_residues_within_distance(matrix_idx, dist_matrix; distance=13.0)
+        push!(all_round_indices, round_indices)
     end
+    
+    if isempty(all_round_indices)
+        @warn "No valid distance matrices found for $mutation."
+        return Int[]
+    end
+    
+    # Get intersection of all rounds
+    indices = all_round_indices[1]
+    for round_indices in all_round_indices[2:end]
+        indices = intersect(indices, round_indices)
+    end
+    
+    return indices
+end
 
-    mut_terms = zeros(Float64, num_rounds, length(indices))
-    wt_terms = zeros(Float64, num_rounds, length(indices))
+"""
+    filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::String, params::EntropyParams, num_rounds::Int=20)
 
+Filter out low pLDDT residues for each round and return the union of all filtered residues.
+Uses data_dir from params struct.
+"""
+function filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::String, params::EntropyParams, num_rounds::Int=20)::Vector{Int}
+    if !params.filter_low_plddt
+        return indices
+    end
+    
+    # Ensure data_dir is provided
+    if isempty(params.data_dir)
+        error("No data directory provided: params.data_dir is empty. Please provide data_dir in EntropyParams.")
+    end
+    
+    all_low_plddt = Set{Int}()
+    datadir = params.data_dir
+    
+    # Get low pLDDT residues for each available round
     for round_idx in 1:num_rounds
-        PAE_mut = PAE_mut_rounds[round_idx]
-        PAE_wt = PAE_wt_rounds[round_idx]
-
-        dist_mut = if config.mut_dist_matrices !== nothing && 
-                      haskey(config.mut_dist_matrices, String(mutation)) && 
-                      round_idx <= length(config.mut_dist_matrices[String(mutation)])
-            config.mut_dist_matrices[String(mutation)][round_idx]
-        else
-            try
-                get_dist_map(config.datadir, String(mutation), round_idx; cache_manager)
-            catch e
-                @warn "Could not read mutant distance matrix for $mutation round $round_idx: $e. Using identity matrix."
-                Matrix{Float64}(I, size(PAE_mut))
+        try
+            low_plddt_residues = get_low_plddt_residues(mutation, round_idx, datadir, threshold=params.plddt_threshold)
+            if !isempty(low_plddt_residues)
+                # Convert to matrix indices (add offset)
+                low_plddt_matrix_indices = [r + params.offset for r in low_plddt_residues]
+                union!(all_low_plddt, low_plddt_matrix_indices)
             end
+        catch e
+            # Skip rounds that don't exist or have errors - this is expected behavior
+            continue
         end
+    end
+    
+    # Filter out low pLDDT residues from indices
+    filtered_indices = filter(idx -> !(idx in all_low_plddt), indices)    
+    
+    return filtered_indices
+end
 
-        dist_wt = if config.wt_dist_matrices !== nothing && round_idx <= length(config.wt_dist_matrices)
-            config.wt_dist_matrices[round_idx]
-        else
-            try
-                get_dist_map(config.datadir, config.wt_identifier, round_idx; cache_manager)
-            catch e
-                @warn "Could not read WT distance matrix for $(config.wt_identifier) round $round_idx: $e. Using identity matrix."
-                Matrix{Float64}(I, size(PAE_wt))
-            end
-        end
+"""
+    calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
 
+Calculate entropy terms for mutant and wild-type across all rounds.
+"""
+function calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
+    mut_terms = zeros(length(round_data), length(indices))
+    wt_terms = zeros(length(round_data), length(indices))
+    
+    for (round_idx, (PAE_mut, PAE_wt, dist_mut, dist_wt)) in enumerate(round_data)
         for (term_idx, i) in enumerate(indices)
             if checkbounds(Bool, dist_mut, matrix_idx, i) &&
                checkbounds(Bool, dist_wt, matrix_idx, i) &&
@@ -289,22 +291,68 @@ function ΔΔS(
                 d_wt = dist_wt[matrix_idx, i]
 
                 if d_mut > 0.0 && d_wt > 0.0
-                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - rho) / (d_mut^α)
-                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - rho) / (d_wt^α)
+                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - params.rho) / (d_mut^params.α)
+                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - params.rho) / (d_wt^params.α)
                 end
             end
         end
     end
+    
+    return mut_terms, wt_terms
+end
 
+"""
+    ΔΔS(params::EntropyParams, data::MutationData)
+
+Calculates the change in entropy (ΔΔS) for a given mutation using structured parameters.
+This is the main function that orchestrates the entropy calculation process.
+"""
+function ΔΔS(params::EntropyParams, data::MutationData)::Float64
+    matrix_idx = params.position - params.offset
+    
+    # Collect round data
+    round_data = Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}()
+    for round_idx in eachindex(data.mutant_pae, data.wt_pae)
+        if round_idx <= length(data.mutant_dist) && round_idx <= length(data.wt_dist)
+            push!(round_data, (data.mutant_pae[round_idx], data.wt_pae[round_idx], 
+                              data.mutant_dist[round_idx], data.wt_dist[round_idx]))
+        end
+    end
+    
+    if isempty(round_data)
+        @warn "No valid round data found for $(data.mutation)."
+        return 0.0
+    end
+    
+    # Find stable neighbors for both mutant and WT
+    indices_mut = find_stable_neighbors(matrix_idx, data.mutant_dist, "$(data.mutation)_mutant")
+    indices_wt = find_stable_neighbors(matrix_idx, data.wt_dist, "$(data.mutation)_wt")
+    
+    # Use intersection of both mutant and WT stable neighbors
+    indices = intersect(indices_mut, indices_wt)
+    
+    if isempty(indices)
+        @warn "No residues found within 13Å in all rounds for $(data.mutation)."
+        return 0.0
+    end
+    
+    # Filter out low pLDDT residues if requested (applies to all rounds)
+    indices = filter_low_plddt_residues_per_round(indices, data.mutation, params, length(round_data))
+    
+    if isempty(indices)
+        @warn "All residues within 13Å were filtered out due to low pLDDT for $(data.mutation)."
+        return 0.0
+    end
+    
+    # Calculate entropy terms
+    mut_terms, wt_terms = calculate_entropy_terms(matrix_idx, indices, round_data, params)
+    
+    # Calculate final result
     avg_mut_terms = mean(mut_terms, dims = 1)[1, :]
     avg_wt_terms = mean(wt_terms, dims = 1)[1, :]
-
-    ΔΔS_val = 0.0
-    for (term_idx, i) in enumerate(indices)
-        ΔΔS_val += abs(Γ[matrix_idx, i]) * (avg_mut_terms[term_idx] - avg_wt_terms[term_idx])
-    end
-
-    return ΔΔS_val / length(indices)
+    
+    ΔΔS_val = sum(avg_mut_terms - avg_wt_terms) / length(indices)
+    return ΔΔS_val
 end
 
 """
@@ -315,32 +363,34 @@ Calculates the corrected ΔΔG value.
 ΔΔG_prime(A::Float64, ΔΔS::Float64, ΔΔG::Float64)::Float64 = ΔΔG + A * ΔΔS
 
 """
-    calculate_ddgs(...)
+    calculate_ddgs(task_file_path, single_ddG, pdb_path, wt_pae, wt_dist, paes, dist_matrices, ddG_exp, rho, A, α, offset; ...)
 
-Calculates predicted ΔΔG values for a set of mutations.
+Calculates predicted ΔΔG values for a set of mutations using the new structured API.
 """
 function calculate_ddgs(
     task_file_path::String,
     single_ddG::Dict{String,Float64},
     pdb_path::String,
-    WT_pae::Vector{Matrix{Float64}},
+    wt_pae::Vector{Matrix{Float64}},
+    wt_dist::Vector{Matrix{Float64}},
     paes::Dict{String,Vector{Matrix{Float64}}},
+    dist_matrices::Dict{String,Vector{Matrix{Float64}}},
     ddG_exp::DataFrame,
     rho::Float64,
     A::Float64,
     α::Float64,
-    config::EntropyConfig;
+    offset::Int;
     verbose::Bool = false,
-    cache_manager::Union{CacheManager,Nothing} = nothing,
+    data_dir::String = "",
+    filter_low_plddt::Bool = false,
+    plddt_threshold::Float64 = 90.0,
 )::Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}
-    coordinates = read_coordinates(pdb_path)
-    Γ = compute_Γ(coordinates, config.gamma_params)
     mutations = read_mutations_from_file(task_file_path)
     results = Vector{Tuple{Float64,Float64,Float64}}()
 
     for m in mutations
         position = parse_mutation_position(m)
-        result = process_single_mutation(m, position, single_ddG, paes, Γ, WT_pae, ddG_exp, rho, A, α, config, verbose; cache_manager)
+        result = process_single_mutation(m, position, single_ddG, wt_pae, wt_dist, paes, dist_matrices, ddG_exp, rho, A, α, offset, verbose, data_dir, filter_low_plddt, plddt_threshold)
         
         if result !== nothing && !isnan(last(result))
             push!(results, result)
@@ -379,21 +429,24 @@ function read_mutations_from_file(task_file_path::String)::Vector{String}
     return [strip(line) for line in eachline(task_file_path) if !isempty(strip(line))]
 end
 
-"""Processes a single mutation to calculate its ΔΔG."""
+"""Processes a single mutation to calculate its ΔΔG using structured data."""
 function process_single_mutation(
     mutation::AbstractString,
     position::Int,
     single_ddG::Dict{String,Float64},
+    wt_pae::Vector{Matrix{Float64}},
+    wt_dist::Vector{Matrix{Float64}},
     paes::Dict{String,Vector{Matrix{Float64}}},
-    Γ::Matrix{Float64},
-    WT_pae::Vector{Matrix{Float64}},
+    dist_matrices::Dict{String,Vector{Matrix{Float64}}},
     ddG_exp::DataFrame,
     rho::Float64,
     A::Float64,
     α::Float64,
-    config::EntropyConfig,
-    verbose::Bool;
-    cache_manager::Union{CacheManager,Nothing},
+    offset::Int,
+    verbose::Bool,
+    data_dir::String = "",
+    filter_low_plddt::Bool = false,
+    plddt_threshold::Float64 = 90.0,
 )::Union{Tuple{Float64,Float64,Float64},Nothing}
     mutation_upper = uppercase(mutation)
     
@@ -406,6 +459,11 @@ function process_single_mutation(
         verbose && println("Skipping: $mutation (no PAE data).")
         return nothing
     end
+    
+    if !haskey(dist_matrices, mutation)
+        verbose && println("Skipping: $mutation (no distance matrix data).")
+        return nothing
+    end
 
     experimental_ddG = get_experimental_ddg(ddG_exp, position, string(mutation_upper[end]))
     if experimental_ddG === nothing
@@ -414,9 +472,12 @@ function process_single_mutation(
     end
 
     ddG = single_ddG[mutation_upper]
-    pae_rounds = paes[mutation]
     
-    ΔΔS_val = ΔΔS(position, rho, α, Γ, pae_rounds, WT_pae, mutation, config; cache_manager)
+    # Create structured data
+    data = MutationData(wt_pae, paes[mutation], wt_dist, dist_matrices[mutation], mutation)
+    params = EntropyParams(position, rho, α, offset, filter_low_plddt, plddt_threshold, data_dir)
+    
+    ΔΔS_val = ΔΔS(params, data)
     predicted_ddG = ΔΔG_prime(A, ΔΔS_val, ddG)
     
     return (experimental_ddG, predicted_ddG, ddG)
@@ -449,112 +510,4 @@ function get_residue_calpha_b_factor(pdb_file_path::String)::Dict{String,Float64
         @warn "Error reading PDB file: $e"
     end
     return residue_calpha_b_factors
-end
-
-"""
-    optimize_gamma_parameters(coordinates, experimental_msf; verbose=false)
-
-Optimizes Gamma kernel function parameters {η₁, κ₁, η₂, κ₂} to maximize Pearson correlation 
-coefficient between theoretical and experimental MSF values.
-
-# Arguments
-- `coordinates::AbstractVector{<:AbstractVector{<:Real}}`: A vector of 3D coordinates for each atom.
-- `experimental_msf::Vector{Float64}`: Experimental MSF (B-factor) values.
-- `verbose::Bool`: Whether to print progress information.
-
-# Returns
-- `NamedTuple`: Best parameters and maximum PCC value.
-"""
-function optimize_gamma_parameters(
-    coordinates::AbstractVector{<:AbstractVector{<:Real}},
-    experimental_msf::Vector{Float64};
-    verbose::Bool = false
-)::NamedTuple{(:eta1, :kappa1, :eta2, :kappa2, :max_pcc), NTuple{5,Float64}}
-    
-    # Parameter ranges
-    eta1_range = 1:30
-    kappa1_range = 1:12
-    eta2_range = 1:20
-    kappa2_range = 1:12
-    
-    max_pcc = 0.0
-    best_params = (eta1=1.0, kappa1=1.0, eta2=1.0, kappa2=1.0, max_pcc=0.0)
-    
-    total_combinations = length(eta1_range) * length(kappa1_range) * length(eta2_range) * length(kappa2_range)
-    current_iteration = 0
-    
-    verbose && println("Starting parameter optimization with $total_combinations combinations...")
-    
-    for eta1 in eta1_range, kappa1 in kappa1_range, eta2 in eta2_range, kappa2 in kappa2_range
-        current_iteration += 1
-        
-        # Calculate Gamma matrices
-        Γ1 = Γ(coordinates, eta1, kappa1)
-        Γ2 = Γ(coordinates, eta2, kappa2)
-        Γ_total = Γ1 + Γ2
-        
-        # Calculate theoretical MSF
-        theoretical_msf = msf(Γ_total)
-        
-        # Calculate Pearson correlation coefficient
-        pcc = cor(theoretical_msf, experimental_msf)
-        
-        # Update best parameters if PCC improved
-        if pcc > max_pcc
-            max_pcc = pcc
-            best_params = (eta1=Float64(eta1), kappa1=Float64(kappa1), 
-                          eta2=Float64(eta2), kappa2=Float64(kappa2), max_pcc=max_pcc)
-            verbose && println("New best PCC: $max_pcc with params η₁=$eta1, κ₁=$kappa1, η₂=$eta2, κ₂=$kappa2")
-        end
-        
-        # Progress update
-        if verbose && current_iteration % 1000 == 0
-            progress = round(current_iteration / total_combinations * 100, digits=1)
-            println("Progress: $progress% ($current_iteration/$total_combinations)")
-        end
-    end
-    
-    verbose && println("Optimization complete. Best PCC: $max_pcc")
-    return best_params
-end
-
-"""
-    fit_gamma_to_bfactor(pdb_file_path; verbose=false)
-
-Convenience function to fit Gamma kernel parameters using B-factor data from a PDB file.
-
-# Arguments
-- `pdb_file_path::String`: Path to the PDB file.
-- `verbose::Bool`: Whether to print progress information.
-
-# Returns
-- `NamedTuple`: Best parameters and maximum PCC value.
-"""
-function fit_gamma_to_bfactor(pdb_file_path::String; verbose::Bool = false)::NamedTuple
-    # Read coordinates and B-factors
-    coordinates = read_coordinates(pdb_file_path)
-    b_factors_dict = get_residue_calpha_b_factor(pdb_file_path)
-    
-    verbose && println("Found $(length(b_factors_dict)) residues with B-factor data")
-    
-    # Extract B-factor values in residue order
-    experimental_msf = Float64[]
-    structure = read(pdb_file_path, PDBFormat)
-    
-    for residue in collectresidues(structure, standardselector)
-        residue_id = "$(resname(residue)) $(resnumber(residue)) $(chainid(residue))"
-        if haskey(b_factors_dict, residue_id)
-            push!(experimental_msf, b_factors_dict[residue_id])
-        else
-            verbose && println("No B-factor found for residue: $residue_id")
-        end
-    end
-    
-    if length(experimental_msf) != length(coordinates)
-        error("Mismatch between number of coordinates ($(length(coordinates))) and B-factors ($(length(experimental_msf))). Check if B-factor data is available in the PDB file.")
-    end
-    
-    verbose && println("Loaded $(length(experimental_msf)) residues for optimization.")
-    
-    return optimize_gamma_parameters(coordinates, experimental_msf; verbose=verbose)
 end
