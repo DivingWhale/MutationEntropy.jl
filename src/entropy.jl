@@ -255,8 +255,10 @@ function filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::Str
         try
             low_plddt_residues = get_low_plddt_residues(mutation, round_idx, datadir, threshold=params.plddt_threshold)
             if !isempty(low_plddt_residues)
-                # Convert to matrix indices (add offset)
-                low_plddt_matrix_indices = [r + params.offset for r in low_plddt_residues]
+                # Convert full sequence residue numbers to matrix indices
+                # Full sequence residue 88 -> matrix index 1, 89 -> 2, etc.
+                # So matrix_index = full_seq_residue - 87
+                low_plddt_matrix_indices = [r - 87 for r in low_plddt_residues if r >= 88]  # Only include residues in PDB region
                 union!(all_low_plddt, low_plddt_matrix_indices)
             end
         catch e
@@ -266,7 +268,13 @@ function filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::Str
     end
     
     # Filter out low pLDDT residues from indices
-    filtered_indices = filter(idx -> !(idx in all_low_plddt), indices)    
+    original_count = length(indices)
+    filtered_indices = filter(idx -> !(idx in all_low_plddt), indices)
+    filtered_count = original_count - length(filtered_indices)
+    
+    if filtered_count > 0
+        println("ΔΔS calculation: Filtered out $filtered_count low pLDDT residues (pLDDT < $(params.plddt_threshold)) across all rounds for position $(params.position)")
+    end
     
     return filtered_indices
 end
@@ -310,6 +318,34 @@ This is the main function that orchestrates the entropy calculation process.
 function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     matrix_idx = params.position - params.offset
     
+    # First layer filtering: check if the current position itself is low pLDDT
+    if params.filter_low_plddt
+        if !isempty(params.data_dir)
+            # Convert current position to full sequence residue number for pLDDT lookup
+            # params.position is like 140, which corresponds to full sequence residue 140
+            full_seq_residue_number = params.position  # Current position is already full sequence number
+            is_position_low_plddt = false
+            
+            for round_idx in 1:length(data.mutant_pae)
+                try
+                    low_plddt_residues = get_low_plddt_residues(data.mutation, round_idx, params.data_dir, threshold=params.plddt_threshold)
+                    if full_seq_residue_number in low_plddt_residues
+                        is_position_low_plddt = true
+                        break
+                    end
+                catch e
+                    # Skip rounds that don't exist - this is expected
+                    continue
+                end
+            end
+            
+            if is_position_low_plddt
+                println("ΔΔS calculation: Position $(params.position) itself is low pLDDT (< $(params.plddt_threshold)) in $(data.mutation)")
+                return NaN
+            end
+        end
+    end
+    
     # Collect round data
     round_data = Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}()
     for round_idx in eachindex(data.mutant_pae, data.wt_pae)
@@ -320,8 +356,8 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     end
     
     if isempty(round_data)
-        @warn "No valid round data found for $(data.mutation)."
-        return 0.0
+        @warn "No valid round data found for position $(params.position) in $(data.mutation)."
+        return NaN
     end
     
     # Find stable neighbors for both mutant and WT
@@ -332,16 +368,16 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     indices = intersect(indices_mut, indices_wt)
     
     if isempty(indices)
-        @warn "No residues found within 13Å in all rounds for $(data.mutation)."
-        return 0.0
+        @warn "No residues found within 13Å in all rounds for position $(params.position) in $(data.mutation)."
+        return NaN
     end
     
     # Filter out low pLDDT residues if requested (applies to all rounds)
     indices = filter_low_plddt_residues_per_round(indices, data.mutation, params, length(round_data))
     
     if isempty(indices)
-        @warn "All residues within 13Å were filtered out due to low pLDDT for $(data.mutation)."
-        return 0.0
+        @warn "All residues within 13Å were filtered out due to low pLDDT for position $(params.position) in $(data.mutation)."
+        return NaN
     end
     
     # Calculate entropy terms
