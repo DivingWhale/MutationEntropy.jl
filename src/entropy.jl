@@ -272,9 +272,9 @@ function filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::Str
     filtered_indices = filter(idx -> !(idx in all_low_plddt), indices)
     filtered_count = original_count - length(filtered_indices)
     
-    if filtered_count > 0
-        println("ΔΔS calculation: Filtered out $filtered_count low pLDDT residues (pLDDT < $(params.plddt_threshold)) across all rounds for position $(params.position)")
-    end
+    # if filtered_count > 0
+    #     println("ΔΔS calculation: Filtered out $filtered_count low pLDDT residues (pLDDT < $(params.plddt_threshold)) across all rounds for position $(params.position)")
+    # end
     
     return filtered_indices
 end
@@ -340,7 +340,7 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
             end
             
             if is_position_low_plddt
-                println("ΔΔS calculation: Position $(params.position) itself is low pLDDT (< $(params.plddt_threshold)) in $(data.mutation)")
+                # println("ΔΔS calculation: Position $(params.position) itself is low pLDDT (< $(params.plddt_threshold)) in $(data.mutation)")
                 return NaN
             end
         end
@@ -376,7 +376,7 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     indices = filter_low_plddt_residues_per_round(indices, data.mutation, params, length(round_data))
     
     if isempty(indices)
-        @warn "All residues within 13Å were filtered out due to low pLDDT for position $(params.position) in $(data.mutation)."
+        # @warn "All residues within 13Å were filtered out due to low pLDDT for position $(params.position) in $(data.mutation)."
         return NaN
     end
     
@@ -387,7 +387,7 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     avg_mut_terms = mean(mut_terms, dims = 1)[1, :]
     avg_wt_terms = mean(wt_terms, dims = 1)[1, :]
     
-    ΔΔS_val = sum(avg_mut_terms - avg_wt_terms) / length(indices)
+    ΔΔS_val = sum(avg_mut_terms - avg_wt_terms)
     return ΔΔS_val
 end
 
