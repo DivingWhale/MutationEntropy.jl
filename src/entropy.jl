@@ -250,27 +250,29 @@ function filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::Str
     all_low_plddt = Set{Int}()
     datadir = params.data_dir
     
-    # Get low pLDDT residues for each available round
-    for round_idx in 1:num_rounds
-        try
-            low_plddt_residues = get_low_plddt_residues(mutation, round_idx, datadir, threshold=params.plddt_threshold)
-            if !isempty(low_plddt_residues)
-                # Convert full sequence residue numbers to matrix indices
-                # Full sequence residue 88 -> matrix index 1, 89 -> 2, etc.
-                # So matrix_index = full_seq_residue - 87
-                low_plddt_matrix_indices = [r - 87 for r in low_plddt_residues if r >= 88]  # Only include residues in PDB region
-                union!(all_low_plddt, low_plddt_matrix_indices)
+    # Get low pLDDT residues for both mutant and WT for each available round
+    for mut_id in [mutation, "WT"]
+        for round_idx in 1:num_rounds
+            try
+                low_plddt_residues = get_low_plddt_residues(mut_id, round_idx, datadir, threshold=params.plddt_threshold)
+                if !isempty(low_plddt_residues)
+                    # Convert full sequence residue numbers to matrix indices
+                    # Full sequence residue 88 -> matrix index 1, 89 -> 2, etc.
+                    # So matrix_index = full_seq_residue - 87
+                    low_plddt_matrix_indices = [r - 87 for r in low_plddt_residues if r >= 88]  # Only include residues in PDB region
+                    union!(all_low_plddt, low_plddt_matrix_indices)
+                end
+            catch e
+                # Skip rounds that don't exist or have errors - this is expected behavior
+                continue
             end
-        catch e
-            # Skip rounds that don't exist or have errors - this is expected behavior
-            continue
         end
     end
     
     # Filter out low pLDDT residues from indices
-    original_count = length(indices)
+    # original_count = length(indices)
     filtered_indices = filter(idx -> !(idx in all_low_plddt), indices)
-    filtered_count = original_count - length(filtered_indices)
+    # filtered_count = original_count - length(filtered_indices)
     
     # if filtered_count > 0
     #     println("ΔΔS calculation: Filtered out $filtered_count low pLDDT residues (pLDDT < $(params.plddt_threshold)) across all rounds for position $(params.position)")
@@ -318,29 +320,35 @@ This is the main function that orchestrates the entropy calculation process.
 function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     matrix_idx = params.position - params.offset
     
-    # First layer filtering: check if the current position itself is low pLDDT
+    # First layer filtering: check if the current position itself is low pLDDT in either WT or mutant
     if params.filter_low_plddt
         if !isempty(params.data_dir)
-            # Convert current position to full sequence residue number for pLDDT lookup
-            # params.position is like 140, which corresponds to full sequence residue 140
-            full_seq_residue_number = params.position  # Current position is already full sequence number
+            full_seq_residue_number = params.position
             is_position_low_plddt = false
             
-            for round_idx in 1:length(data.mutant_pae)
-                try
-                    low_plddt_residues = get_low_plddt_residues(data.mutation, round_idx, params.data_dir, threshold=params.plddt_threshold)
-                    if full_seq_residue_number in low_plddt_residues
-                        is_position_low_plddt = true
-                        break
+            # Check both mutant and WT pLDDTs
+            for mut_id in [data.mutation, "WT"]
+                num_rounds_to_check = (mut_id == "WT") ? length(data.wt_pae) : length(data.mutant_pae)
+                
+                for round_idx in 1:num_rounds_to_check
+                    try
+                        low_plddt_residues = get_low_plddt_residues(mut_id, round_idx, params.data_dir, threshold=params.plddt_threshold)
+                        if full_seq_residue_number in low_plddt_residues
+                            is_position_low_plddt = true
+                            break
+                        end
+                    catch e
+                        # Skip rounds that don't exist - this is expected
+                        continue
                     end
-                catch e
-                    # Skip rounds that don't exist - this is expected
-                    continue
+                end
+                if is_position_low_plddt
+                    break
                 end
             end
             
             if is_position_low_plddt
-                # println("ΔΔS calculation: Position $(params.position) itself is low pLDDT (< $(params.plddt_threshold)) in $(data.mutation)")
+                # println("ΔΔS calculation: Position $(params.position) itself is low pLDDT (< $(params.plddt_threshold)) in $(data.mutation) or WT")
                 return NaN
             end
         end
