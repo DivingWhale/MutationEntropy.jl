@@ -13,24 +13,6 @@ function clear_cache!()
     empty!(VARIANT_CACHE)
 end
 
-# 定义 extract_parts 函数
-"""
-    extract_parts(genetic_string::String)
-
-Extracts the numeric and alphabetic parts from a genetic string.
-
-# Arguments
-- `genetic_string::String`: The input genetic string.
-
-# Returns
-- `Tuple`: A tuple containing the numeric part and the alphabetic part extracted from the genetic string.
-           If no match is found, returns `(nothing, nothing)`.
-"""
-function extract_parts(genetic_string::String)
-    m= match(r"(\d+)([A-Za-z]*)", genetic_string)
-    return m !== nothing ? (parse(Int, m.captures[1]), m.captures[2]) : (nothing, nothing)
-end
-
 function read_ddG_file(ddGPath::String)
     # 检查缓存
     if haskey(FILE_CACHE, ddGPath)

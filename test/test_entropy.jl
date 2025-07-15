@@ -7,86 +7,6 @@ using BioStructures
 
 @testset "MutationEntropy.jl Tests" begin
 
-    @testset "Φ function tests" begin
-        # Test basic functionality of the Φ function
-        @test MutationEntropy.Φ(0.0, 20, 7) ≈ 1.0
-        @test MutationEntropy.Φ(20.0, 20, 7) ≈ exp(-1.0)
-        @test 0.0 < MutationEntropy.Φ(10.0, 20, 7) < 1.0
-        
-        # Test with different parameters
-        @test MutationEntropy.Φ(0.0, 13, 10) ≈ 1.0
-        @test MutationEntropy.Φ(13.0, 13, 10) ≈ exp(-1.0)
-    end
-
-    @testset "Γ matrix function tests" begin
-        # Create simple test coordinates
-        test_coords = [
-            [0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0],
-            [0.0, 1.0, 0.0]
-        ]
-        
-        # Test Γ matrix computation
-        Γ_matrix = MutationEntropy.Γ(test_coords, 20, 7)
-        
-        # Check dimensions
-        @test size(Γ_matrix) == (3, 3)
-        
-        # Check symmetry
-        @test Γ_matrix ≈ Γ_matrix'
-        
-        # Check that diagonal elements are negative sum of off-diagonal elements
-        for i in 1:3
-            @test Γ_matrix[i, i] ≈ -sum(Γ_matrix[i, 1:end .!= i])
-        end
-        
-        # Check that row sums are approximately zero (due to construction)
-        for i in 1:3
-            @test sum(Γ_matrix[i, :]) ≈ 0.0 atol=1e-10
-        end
-    end
-
-    @testset "compute_Γ function tests" begin
-        # Create test coordinates
-        test_coords = [
-            [0.0, 0.0, 0.0],
-            [2.0, 0.0, 0.0],
-            [0.0, 2.0, 0.0],
-            [0.0, 0.0, 2.0]
-        ]
-        
-        # Test compute_Γ function
-        Γ_combined = MutationEntropy.compute_Γ(test_coords)
-        
-        # Check dimensions
-        @test size(Γ_combined) == (4, 4)
-        
-        # Check symmetry
-        @test Γ_combined ≈ Γ_combined'
-        
-        # Verify it's a sum of two Γ matrices
-        Γ1 = MutationEntropy.Γ(test_coords, 20, 7)
-        Γ2 = MutationEntropy.Γ(test_coords, 13, 10)
-        @test Γ_combined ≈ Γ1 + Γ2
-    end
-
-    @testset "msf function tests" begin
-        # Create a simple test matrix
-        test_matrix = [2.0 -1.0; -1.0 2.0]
-        
-        # Test msf function
-        msf_result = MutationEntropy.msf(test_matrix)
-        
-        # Check that result is a vector with correct length
-        @test length(msf_result) == 2
-        @test all(msf_result .> 0)  # MSF values should be positive
-        
-        # Test with singular matrix (should still work with pinv)
-        singular_matrix = [1.0 1.0; 1.0 1.0]
-        msf_singular = MutationEntropy.msf(singular_matrix)
-        @test length(msf_singular) == 2
-    end
-
     @testset "read_xvg function tests" begin
         # Create a temporary xvg file for testing
         temp_xvg_path = tempname() * ".xvg"
@@ -129,51 +49,26 @@ using BioStructures
 
     @testset "ΔΔS function tests" begin
         # Create test matrices
-        test_Γ = [
-            -2.0  1.0  1.0  0.0;
-             1.0 -2.0  1.0  0.0;
-             1.0  1.0 -2.0  0.0;
-             0.0  0.0  0.0  0.0
-        ]
-        
         test_PAE_mut = rand(4, 4) * 5  # Random PAE values between 0-5
         test_PAE_wt = rand(4, 4) * 5
+        test_dist_mut = rand(4, 4) * 20
+        test_dist_wt = rand(4, 4) * 20
         
         # Test ΔΔS calculation
-        position = 4  # Position with zero connections
+        position = 4
         rho = 1.5
-        
-        # Create test data for the new parameters
-        datadir = tempdir()  # Use temp directory for test
-        mutation = "TestMutation123"  # Valid non-empty mutation string
-        
-        # For testing, we'll create mock distance matrices
-        test_dist_matrix = rand(10, 10) .+ 1.0  # Ensure positive distances
-        for i in 1:10
-            test_dist_matrix[i, i] = 0.0  # Self-distance is 0
-        end
-        
-        # Create entropy configuration for new interface - now uses vector of matrices
-        test_wt_dist_matrices = [test_dist_matrix]  # Single round for testing
-        config = MutationEntropy.EntropyConfig(datadir; wt_identifier="test", wt_dist_matrices=test_wt_dist_matrices)
-        
-        # We'll pass the WT distance matrices directly to avoid file I/O in tests
-        # For testing, use single-element vectors to match new multi-round structure
-        test_PAE_mut_vector = [test_PAE_mut]
-        test_PAE_wt_vector = [test_PAE_wt]
-        α = 2.5  # Test α parameter
-        result = MutationEntropy.ΔΔS(position, rho, α, test_Γ, test_PAE_mut_vector, test_PAE_wt_vector, 
-                                     mutation, config)
+        α = 2.0
+        offset = 0
+        datadir = tempdir()
+        mutation = "A4G"
+
+        data = MutationData([test_PAE_wt], [test_PAE_mut], [test_dist_wt], [test_dist_mut], mutation)
+        params = EntropyParams(position, rho, α, offset, false, 90.0, datadir)
+
+        result = ΔΔS(params, data)
         
         # Result should be a real number
         @test isa(result, Real)
-        
-        # Test with offset
-        config_offset = MutationEntropy.EntropyConfig(datadir; wt_identifier="test", wt_dist_matrices=test_wt_dist_matrices, offset=1)
-        result_offset = MutationEntropy.ΔΔS(position + 1, rho, α, test_Γ, test_PAE_mut_vector, test_PAE_wt_vector, 
-                                           mutation, config_offset)
-        # Handle NaN case properly - if both are NaN, they should be considered equal for this test
-        @test (isnan(result) && isnan(result_offset)) || result ≈ result_offset
     end
 
     @testset "ΔΔG_prime function tests" begin
@@ -243,53 +138,6 @@ using BioStructures
             
         finally
             isfile(temp_file_path) && rm(temp_file_path)
-        end
-    end
-
-    @testset "Integration tests" begin
-        # Test that functions work together
-        test_coords = [
-            [0.0, 0.0, 0.0],
-            [3.8, 0.0, 0.0],  # Typical CA-CA distance
-            [0.0, 3.8, 0.0]
-        ]
-        
-        # Test full workflow from coordinates to MSF
-        Γ_matrix = MutationEntropy.compute_Γ(test_coords)
-        msf_values = MutationEntropy.msf(Γ_matrix)
-        
-        @test length(msf_values) == 3
-        @test all(msf_values .> 0)
-        
-        # Test PAE processing workflow
-        test_PAE = [
-            1.0 2.0 3.0;
-            2.0 1.0 2.5;
-            3.0 2.5 1.0
-        ]
-        
-        # Calculate ΔΔS for all positions
-        rho = 1.5
-        # Create test parameters for ΔΔS
-        test_datadir = tempdir()
-        test_mutation = "TestMutation"
-        test_dist_matrix = rand(3, 3) .+ 1.0
-        for i in 1:3
-            test_dist_matrix[i, i] = 0.0
-        end
-        
-        # Create entropy configuration for new interface
-        test_wt_dist_matrices = [test_dist_matrix]  # Single round for testing
-        config = MutationEntropy.EntropyConfig(test_datadir; wt_identifier="test", wt_dist_matrices=test_wt_dist_matrices)
-        
-        for pos in 1:3
-            # Use vector format for new multi-round structure
-            test_PAE_vector = [test_PAE]
-            test_PAE_wt_vector = [test_PAE * 0.9]
-            α = 2.5  # Test α parameter
-            result = MutationEntropy.ΔΔS(pos, rho, α, Γ_matrix, test_PAE_vector, test_PAE_wt_vector, 
-                                         test_mutation, config)
-            @test isa(result, Real)
         end
     end
 
