@@ -160,9 +160,18 @@ end
 """
     find_residues_within_distance(residue_id::Int, d_matrix::Matrix{Float64}; distance::Float64=13.0)
 
-Find all residues within a specific distance of a target residue.
-Original logic: `x -> x < distance`. This includes the residue itself (dist 0)
-and potentially others if distance is very small.
+Find all residues within a specific distance of a target residue using matrix indices.
+
+Args:
+- residue_id: Matrix index of target residue (1-based, for truncated matrix)
+- d_matrix: Distance matrix (truncated)
+- distance: Distance threshold in Angstroms
+
+Returns:
+- Vector of matrix indices for residues within distance threshold
+
+Note: Returns indices including self-distance (0.0) and handles matrix bounds checking.
+Subsequent processing typically filters out the target residue itself.
 """
 function find_residues_within_distance(residue_id::Int, d_matrix::Matrix{Float64}; distance::Float64=13.0)
     # if !(1 <= residue_id <= size(d_matrix, 1))

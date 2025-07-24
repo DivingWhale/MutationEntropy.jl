@@ -1,7 +1,15 @@
 """
     find_stable_neighbors(matrix_idx::Int, distance_matrices::Vector{Matrix{Float64}}, mutation::String)
 
-Find residues that are within 13Å in all rounds.
+Find residues that are within 13Å in all rounds using matrix indices.
+
+Args:
+- matrix_idx: Position index in the truncated matrix (1-based)
+- distance_matrices: Vector of truncated distance matrices  
+- mutation: Mutation identifier for logging
+
+Returns:
+- Vector of matrix indices for stable neighbor residues
 """
 function find_stable_neighbors(matrix_idx::Int, distance_matrices::Vector{Matrix{Float64}}, mutation::String)::Vector{Int}
     all_round_indices = Vector{Vector{Int}}()
@@ -103,13 +111,20 @@ end
 
 Calculates the change in entropy (ΔΔS) for a given mutation using structured parameters.
 This is the main function that orchestrates the entropy calculation process.
+
+The function converts biological residue numbers to matrix indices and performs entropy calculations
+on truncated matrices where the first matrix position corresponds to the first biological residue
+in the analysis region.
 """
 function ΔΔS(params::EntropyParams, data::MutationData)::Float64
+    # Convert biological residue number to matrix index for truncated matrices
+    # For Thermonuclease: position=88, offset=87 → matrix_idx=1 (first position in truncated matrix)
     matrix_idx = params.position - params.offset
     
-    # First layer filtering: check if the current position itself is low pLDDT in either WT or mutant
+    # First layer filtering: check if the current position itself has low pLDDT
     if params.filter_low_plddt
         if !isempty(params.data_dir)
+            # Use the biological residue number for pLDDT lookup
             full_seq_residue_number = params.position
             is_position_low_plddt = false
             
@@ -155,7 +170,7 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
         return NaN
     end
     
-    # Find stable neighbors for both mutant and WT
+    # Find stable neighbors for both mutant and WT using matrix indices
     indices_mut = find_stable_neighbors(matrix_idx, data.mutant_dist, "$(data.mutation)_mutant")
     indices_wt = find_stable_neighbors(matrix_idx, data.wt_dist, "$(data.mutation)_wt")
     
