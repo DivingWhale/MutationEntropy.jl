@@ -288,3 +288,95 @@ function calculate_ddgs(
     
     return exp_ddG, pred_ddG, rosetta_ddG
 end
+
+function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool)
+    all_mutant_data = Dict{String, Dict{String, Float64}}()
+
+    # Iterate through each mutant directory in the base data directory
+    for mutant_dir_name in readdir(datadir)
+        mutant_path = joinpath(datadir, mutant_dir_name)
+        if !isdir(mutant_path)
+            continue
+        end
+
+        # Construct the path to the specific parameter subdirectory
+        param_path = joinpath(mutant_path, param_subdir)
+        
+        if !isdir(param_path)
+            # println("Parameter directory not found for mutant $mutant_dir_name: $param_path. Skipping...")
+            continue
+        end
+
+        # Find the JLD2 file in the parameter directory
+        jld_files = filter(f -> endswith(f, ".jld2"), readdir(param_path))
+        if isempty(jld_files)
+            # println("No JLD2 file found in $param_path. Skipping...")
+            continue
+        end
+        filepath = joinpath(param_path, first(jld_files))
+
+        # Load data from the JLD2 file
+        local temp
+        try
+            temp = jldopen(filepath, "r") do file
+                if !haskey(file, "data")
+                    println("JLD2 file $filepath is missing the 'data' key. Skipping...")
+                    return # Use return to exit the outer loop's current iteration via the anonymous function
+                end
+                file["data"]
+            end
+        catch e
+            println("Failed to open or read JLD2 file $filepath. Error: $e. Skipping...")
+            continue
+        end
+
+        # Extract metadata
+        meta = temp["metadata"]
+        mutant_name = lowercase(meta["mutant"])
+        mutation_pos = meta["mutation_position"]
+        offset = meta["residue_offset"]
+
+        # Extract results data directly from the loaded data structure
+        results = temp["results"]
+
+        # Calculate the ddS at the mutation site
+        index = mutation_pos - offset
+        local mutant_ddS
+        # Ensure index is within bounds
+        if index < 1 || index > length(results["all_residues"]["ddS_filtered"])
+            println("Index $index is out of bounds for mutant $mutant_name. Skipping...")
+            continue
+        else
+            mutant_ddS = results["all_residues"]["ddS_filtered"][index]
+        end
+        
+        if isnan(mutant_ddS)
+            println("mutant_ddS for $mutant_name is NaN. Skipping...")
+            continue
+        end
+
+        # Calculate the ddS of nearby residues
+        nearby_ddS_values = filter(!isnan, results["nearby_residues"]["ddS_filtered"])
+        nearby_ddS = sum(nearby_ddS_values)
+        
+        # Normalize by count if flag is set
+        if nearby_normalize && !isempty(nearby_ddS_values)
+            nearby_ddS = nearby_ddS / length(nearby_ddS_values)
+        end
+
+        # Store the results in the dictionary
+        all_mutant_data[mutant_name] = Dict(
+            "mutant_ddS" => mutant_ddS,
+            "nearby_ddS" => nearby_ddS
+        )
+    end
+
+    # Convert the calculated data dictionary to a DataFrame
+    calculated_df = DataFrame(
+        mutant = collect(keys(all_mutant_data)),
+        mutant_ddS = [d["mutant_ddS"] for d in values(all_mutant_data)],
+        nearby_ddS = [d["nearby_ddS"] for d in values(all_mutant_data)]
+    )
+
+    return calculated_df
+end
