@@ -1,7 +1,3 @@
-using DataFrames
-using Statistics
-using GLM
-
 function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Float64}, predictor_name::String, output_dir::String, prefix::String, target_alpha::Float64, target_rho::Float64, if_normalize::Bool, nearby_normalize::Bool)
     # --- Linear Scaling of Predictor ddG ---
     predictor_col = Symbol(predictor_name * "_ddG")
