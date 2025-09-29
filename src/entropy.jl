@@ -116,7 +116,7 @@ The function converts biological residue numbers to matrix indices and performs 
 on truncated matrices where the first matrix position corresponds to the first biological residue
 in the analysis region.
 """
-function ΔΔS(params::EntropyParams, data::MutationData)::Float64
+function ΔΔS(params::EntropyParams, data::MutationData, self_normalize::Bool)::Float64
     # Convert biological residue number to matrix index for truncated matrices
     # For Thermonuclease: position=88, offset=87 → matrix_idx=1 (first position in truncated matrix)
     matrix_idx = params.position - params.offset
@@ -186,7 +186,7 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     indices = filter_low_plddt_residues_per_round(indices, data.mutation, params, length(round_data))
     
     if isempty(indices)
-        # @warn "All residues within 13Å were filtered out due to low pLDDT for position $(params.position) in $(data.mutation)."
+        @warn "All residues within 13Å were filtered out due to low pLDDT for position $(params.position) in $(data.mutation)."
         return NaN
     end
     
@@ -198,6 +198,9 @@ function ΔΔS(params::EntropyParams, data::MutationData)::Float64
     avg_wt_terms = mean(wt_terms, dims = 1)[1, :]
     
     ΔΔS_val = sum(avg_mut_terms - avg_wt_terms)
+    if self_normalize
+        ΔΔS_val /= length(indices)
+    end
     return ΔΔS_val
 end
 
