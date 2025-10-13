@@ -289,7 +289,7 @@ function calculate_ddgs(
     return exp_ddG, pred_ddG, rosetta_ddG
 end
 
-function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool)
+function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false)::DataFrame
     all_mutant_data = Dict{String, Dict{String, Float64}}()
 
     # Iterate through each mutant directory in the base data directory
@@ -303,14 +303,14 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         param_path = joinpath(mutant_path, param_subdir)
         
         if !isdir(param_path)
-            # println("Parameter directory not found for mutant $mutant_dir_name: $param_path. Skipping...")
+            println("Parameter directory not found for mutant $mutant_dir_name: $param_path. Skipping...")
             continue
         end
 
         # Find the JLD2 file in the parameter directory
         jld_files = filter(f -> endswith(f, ".jld2"), readdir(param_path))
         if isempty(jld_files)
-            # println("No JLD2 file found in $param_path. Skipping...")
+            println("No JLD2 file found in $param_path. Skipping...")
             continue
         end
         filepath = joinpath(param_path, first(jld_files))
@@ -344,14 +344,18 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         local mutant_ddS
         # Ensure index is within bounds
         if index < 1 || index > length(results["all_residues"]["ddS_filtered"])
-            println("Index $index is out of bounds for mutant $mutant_name. Skipping...")
+            if verbose
+                println("Index $index is out of bounds for mutant $mutant_name. Skipping...")
+            end
             continue
         else
             mutant_ddS = results["all_residues"]["ddS_filtered"][index]
         end
         
         if isnan(mutant_ddS)
-            println("mutant_ddS for $mutant_name is NaN. Skipping...")
+            if verbose
+                println("mutant_ddS for $mutant_name is NaN. Skipping...")
+            end
             continue
         end
 
