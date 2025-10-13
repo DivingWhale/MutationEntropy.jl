@@ -16,7 +16,7 @@ using CSV
 
 # Core functionality exports
 export read_coordinates, read_xvg, calculate_ddgs, ΔΔS, read_mutations_from_file, parse_mutation_position, get_variant_paes, get_dist_map, find_residues_within_distance, read_ddg_rosetta, read_ddg_foldx, read_ddg_pythia, read_ddg_stabilityoracle
-export perform_correlation_analysis, process_entropy_data
+export perform_correlation_analysis, process_entropy_data, plot_correction_scatter
 export get_residue_calpha_b_factor
 
 # New structured data exports
