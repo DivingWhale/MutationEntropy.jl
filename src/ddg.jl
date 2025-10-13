@@ -113,7 +113,7 @@ end
 
 Read FoldX ddG data from a directory of FoldX output files.
 """
-function read_ddg_foldx(path::String)
+function read_ddg_foldx(path::String, pdb_ID::String)
     foldx_ddgs = Dict{String, Float64}()
     
     # Iterate through folders in the current directory
@@ -122,7 +122,7 @@ function read_ddg_foldx(path::String)
 
         # Check if it's a directory and not "slogs"
         if isdir(folder_path) && folder_name != "slogs"
-            fxout_file = joinpath(folder_path, "Average_1EY0.fxout")
+            fxout_file = joinpath(folder_path, "Average_$pdb_ID.fxout")
             
             # Check if the fxout file exists
             if isfile(fxout_file)
@@ -150,7 +150,7 @@ end
 
 Read Pythia ddG data from a CSV file.
 """
-function read_ddg_pythia(path::String)
+function read_ddg_pythia(path::String; offset::Int=0)
     pythia_ddgs = Dict{String, Float64}()
     
     # Read the CSV file
@@ -162,9 +162,7 @@ function read_ddg_pythia(path::String)
             mutation_str = string(row[1])  # First column is mutation
             ddg_value = row[2]             # Second column is ddG
             
-            # Convert mutation format from "K_1_A" to "k88a" (lowercase)
-            # Pythia uses 1-based PDB numbering, need to convert to full sequence numbering
-            # PDB position 1 corresponds to full sequence position 88
+            # Convert mutation format from "K_1_A" to "k(1+offset)a" (lowercase)
             parts = split(mutation_str, "_")
             if length(parts) == 3
                 wild_type = lowercase(parts[1])
@@ -172,8 +170,7 @@ function read_ddg_pythia(path::String)
                 mutant = lowercase(parts[3])
                 
                 # Convert PDB position to full sequence position
-                # PDB position 1 -> sequence position 88
-                full_seq_position = pdb_position + 87
+                full_seq_position = pdb_position + offset
                 
                 mutation_clean = wild_type * string(full_seq_position) * mutant
                 pythia_ddgs[mutation_clean] = ddg_value
@@ -191,11 +188,10 @@ end
 
 Read StabilityOracle prediction data from a CSV file.
 """
-function read_ddg_stabilityoracle(path::String)
+function read_ddg_stabilityoracle(path::String; offset::Int=0)
     """
     Read StabilityOracle prediction data from a CSV file.
     Expected format: pdb_code,chain_id,mutation,exp_ddG,pred_ddG
-    Note: PDB numbering + 82 = biological numbering
     """
     stabilityoracle_ddgs = Dict{String, Float64}()
     
@@ -232,8 +228,8 @@ function read_ddg_stabilityoracle(path::String)
         mutation_aa = mutation_str[end]
         pdb_position = parse(Int, mutation_str[2:end-1])
         
-        # Convert PDB position to biological position (PDB + 82 = biological)
-        bio_position = pdb_position + 82
+        # Convert PDB position to biological position
+        bio_position = pdb_position + offset
         
         # Create mutant name in the same format as experimental data (wild_type + position + mutation)
         mutant_name = lowercase(string(wild_type)) * string(bio_position) * lowercase(string(mutation_aa))
