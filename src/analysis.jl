@@ -1,4 +1,4 @@
-function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Float64}, predictor_name::String, output_dir::String, prefix::String, target_alpha::Float64, target_rho::Float64, if_normalize::Bool, nearby_normalize::Bool)
+function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Float64}, predictor_name::String, output_dir::String, prefix::String, target_alpha::Float64, target_rho::Float64, if_normalize::Bool, nearby_normalize::Bool; generate_plots::Bool=false)
     # --- Linear Scaling of Predictor ddG ---
     predictor_col = Symbol(predictor_name * "_ddG")
     scaled_predictor_col = Symbol(predictor_name * "_ddG_scaled")
@@ -44,6 +44,11 @@ function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Flo
         println(io, "")
         println(io, "Combined correlations ($(titlecase(predictor_name)) + A*ddS):")
         
+        plot_dir = joinpath(output_dir, "scatter_plots", "rho_$(target_rho)")
+        if generate_plots
+            mkpath(plot_dir)
+        end
+
         for A in A_values
             # For self ddS
             combined_self = merged_df[!, scaled_predictor_col] .+ A .* merged_df.mutant_ddS
@@ -68,6 +73,12 @@ function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Flo
             entropy_pct_nearby = mean(entropy_contrib_nearby ./ total_contrib_nearby) * 100
             
             println(io, "A=$A: Self=$(round(cor_self, digits=4)) [$(titlecase(predictor_name)):$(round(predictor_pct_self,digits=1))%, Entropy:$(round(entropy_pct_self,digits=1))%], Nearby=$(round(cor_nearby_A, digits=4)) [$(titlecase(predictor_name)):$(round(predictor_pct_nearby,digits=1))%, Entropy:$(round(entropy_pct_nearby,digits=1))%]")
+
+            if generate_plots
+                plot_output_path = joinpath(plot_dir, "$(prefix)$(predictor_name)_scatter_A_$(A).png")
+                plot_title = "$(titlecase(predictor_name)) ddG Correction"
+                plot_correction_scatter(merged_df.ddG, merged_df[!, scaled_predictor_col], combined_self, cor_self, A, plot_output_path, plot_title)
+            end
         end
     end
     
