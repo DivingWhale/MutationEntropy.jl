@@ -79,7 +79,7 @@ end
 """
     calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
 
-Calculate entropy terms for mutant and wild-type across all rounds.
+Calculate entropy terms for mutant and wild-type across all rounds using separate ρ values.
 """
 function calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
     mut_terms = zeros(length(round_data), length(indices))
@@ -96,8 +96,9 @@ function calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_da
                 d_wt = dist_wt[matrix_idx, i]
 
                 if d_mut > 0.0 && d_wt > 0.0
-                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - params.rho) / (d_mut^params.α)
-                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - params.rho) / (d_wt^params.α)
+                    # Use separate ρ values for mutant and wild-type
+                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - params.rho_mut) / (d_mut^params.α)
+                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - params.rho_wt) / (d_wt^params.α)
                 end
             end
         end

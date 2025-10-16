@@ -14,11 +14,12 @@ end
 """
     EntropyParams
 
-Parameters for entropy calculation with clear indexing documentation.
+Parameters for entropy calculation with dual ρ support for mutant and wild-type.
 
 Fields:
 - `position::Int`: Biological residue number for calculation (e.g., 88, 89, 90...)
-- `rho::Float64`: PAE weighting parameter  
+- `rho_mut::Float64`: PAE weighting parameter for mutant (size-based)
+- `rho_wt::Float64`: PAE weighting parameter for wild-type (size-based)
 - `α::Float64`: Distance weighting parameter
 - `offset::Int`: Offset used to convert position to matrix index (matrix_idx = position - offset)
 - `filter_low_plddt::Bool`: Whether to filter low pLDDT residues
@@ -28,7 +29,8 @@ Fields:
 """
 struct EntropyParams
     position::Int
-    rho::Float64
+    rho_mut::Float64
+    rho_wt::Float64
     α::Float64
     offset::Int
     filter_low_plddt::Bool

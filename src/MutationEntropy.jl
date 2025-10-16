@@ -19,6 +19,9 @@ export read_coordinates, read_xvg, calculate_ddgs, ΔΔS, read_mutations_from_fi
 export perform_correlation_analysis, process_entropy_data, plot_correction_scatter
 export get_residue_calpha_b_factor
 
+# Amino acid utilities (new for size-based ρ)
+export parse_mutation_details, single_to_three_letter, get_residue_rho, AMINO_ACID_RHO
+
 # New structured data exports
 export MutationData, EntropyParams
 

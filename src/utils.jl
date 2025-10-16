@@ -5,6 +5,130 @@ end
 
 parse_mutation_position(mutation::AbstractString)::Int = parse(Int, match(r"\d+", mutation).match)
 
+"""
+    parse_mutation_details(mutation_str::String)
+
+Parse mutation string (e.g., "a176g") to extract:
+- from_aa: wild-type amino acid (single letter, uppercase)
+- position: residue position number
+- to_aa: mutant amino acid (single letter, uppercase)
+
+Returns (from_aa, position, to_aa)
+
+# Examples
+```julia
+julia> parse_mutation_details("a176g")
+("A", 176, "G")
+
+julia> parse_mutation_details("V42L")
+("V", 42, "L")
+```
+"""
+function parse_mutation_details(mutation_str::String)
+    m = match(r"^([a-zA-Z]+)(\d+)([a-zA-Z]+)$", mutation_str)
+    if m === nothing
+        error("Invalid mutation string format: $mutation_str. Expected format like 'a176g' or 'V42L'")
+    end
+    
+    from_aa = uppercase(m.captures[1])
+    position = parse(Int, m.captures[2])
+    to_aa = uppercase(m.captures[3])
+    
+    return (from_aa, position, to_aa)
+end
+
+"""
+    single_to_three_letter(aa::String)
+
+Convert single-letter amino acid code to three-letter code.
+
+# Examples
+```julia
+julia> single_to_three_letter("A")
+"ALA"
+
+julia> single_to_three_letter("w")
+"TRP"
+```
+"""
+function single_to_three_letter(aa::String)
+    aa_map = Dict(
+        "A" => "ALA", "C" => "CYS", "D" => "ASP", "E" => "GLU",
+        "F" => "PHE", "G" => "GLY", "H" => "HIS", "I" => "ILE",
+        "K" => "LYS", "L" => "LEU", "M" => "MET", "N" => "ASN",
+        "P" => "PRO", "Q" => "GLN", "R" => "ARG", "S" => "SER",
+        "T" => "THR", "V" => "VAL", "W" => "TRP", "Y" => "TYR"
+    )
+    return get(aa_map, uppercase(aa), aa)  # Return original if not found
+end
+
+# Amino acid size-based ρ calculation
+# Based on relative amino acid sizes from Grantham (1974) and other biochemical references
+"""
+    AMINO_ACID_RHO
+
+Dictionary mapping three-letter amino acid codes to size-based ρ values.
+Smaller amino acids have larger ρ values, larger amino acids have smaller ρ values.
+Based on relative amino acid sizes from Grantham (1974) and biochemical properties.
+"""
+const AMINO_ACID_RHO = Dict(
+    "GLY" => 12.00,  # Size: 1.00 (smallest)
+    "ALA" => 11.45,  # Size: 1.67
+    "SER" => 11.18,  # Size: 2.00
+    "CYS" => 11.18,  # Size: 2.00
+    "VAL" => 11.18,  # Size: 2.00
+    "PRO" => 11.18,  # Size: 2.00
+    "THR" => 10.91,  # Size: 2.33
+    "LEU" => 10.91,  # Size: 2.33
+    "ILE" => 10.91,  # Size: 2.33
+    "ASP" => 10.91,  # Size: 2.33
+    "ASN" => 10.91,  # Size: 2.33
+    "MET" => 10.64,  # Size: 2.67
+    "GLU" => 10.64,  # Size: 2.67
+    "GLN" => 10.64,  # Size: 2.67
+    "HIS" => 10.09,  # Size: 3.33
+    "LYS" => 10.09,  # Size: 3.33
+    "ARG" => 10.09,  # Size: 3.33
+    "PHE" => 9.82,   # Size: 3.67
+    "TYR" => 9.55,   # Size: 4.00
+    "TRP" => 9.00    # Size: 4.67 (largest)
+)
+
+"""
+    get_residue_rho(residue_name::String)
+
+Get the size-based ρ value for a given amino acid residue.
+Accepts both single-letter and three-letter amino acid codes.
+
+# Arguments
+- `residue_name::String`: Amino acid code (single or three letter)
+
+# Returns
+- `Float64`: The ρ value for the amino acid (default: 10.5 for unknown)
+
+# Examples
+```julia
+julia> get_residue_rho("ALA")
+11.45
+
+julia> get_residue_rho("A")
+11.45
+
+julia> get_residue_rho("TRP")
+9.0
+```
+"""
+function get_residue_rho(residue_name::AbstractString)
+    aa_code = uppercase(String(residue_name))
+    
+    # If single letter, convert to three letter
+    if length(aa_code) == 1
+        aa_code = single_to_three_letter(aa_code)
+    end
+    
+    return get(AMINO_ACID_RHO, aa_code, 10.5)  # Default to mid-range value
+end
+
 function read_mutations_from_file(task_file_path::String)::Vector{String}
     return [strip(line) for line in eachline(task_file_path) if !isempty(strip(line))]
 end
