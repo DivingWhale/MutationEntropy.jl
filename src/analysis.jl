@@ -1,4 +1,4 @@
-function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Float64}, predictor_name::String, output_dir::String, prefix::String, target_alpha::Float64, target_rho::Float64, if_normalize::Bool, nearby_normalize::Bool; generate_plots::Bool=false)
+function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Float64}, predictor_name::String, output_dir::String, prefix::String, if_normalize::Bool, nearby_normalize::Bool; generate_plots::Bool=false)
     # --- Linear Scaling of Predictor ddG ---
     predictor_col = Symbol(predictor_name * "_ddG")
     scaled_predictor_col = Symbol(predictor_name * "_ddG_scaled")
@@ -27,12 +27,19 @@ function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Flo
     cor_nearby_diff = cor(merged_df.nearby_ddS, merged_df.ddG_diff)
 
     # --- Save correlations to file ---
-    mkpath(output_dir)
+    # Output structure: <output_dir>/correlations/ and <output_dir>/scatter_plots/
+    correlations_dir = joinpath(output_dir, "correlations")
+    mkpath(correlations_dir)
     
-    output_file = joinpath(output_dir, "$(prefix)$(predictor_name)_correlations_alpha_$(target_alpha)_rho_$(target_rho).txt")
+    scatter_plots_dir = joinpath(output_dir, "scatter_plots")
+    if generate_plots
+        mkpath(scatter_plots_dir)
+    end
+    
+    output_file = joinpath(correlations_dir, "$(prefix)$(predictor_name)_correlations.txt")
     open(output_file, "w") do io
         println(io, "$(titlecase(predictor_name)) Correlation Analysis Results")
-        println(io, "Alpha: $target_alpha, Rho: $target_rho")
+        println(io, "Parameters: alpha=0.0 (no distance weighting), rho=size-based dual")
         println(io, "Normalize: $if_normalize, Nearby_normalize: $nearby_normalize")
         println(io, "Number of mutants: $(nrow(merged_df))")
         println(io, "=" ^ 50)
@@ -43,11 +50,6 @@ function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Flo
         println(io, "Nearby ddS vs ddG_diff: $(round(cor_nearby_diff, digits=4))")
         println(io, "")
         println(io, "Combined correlations ($(titlecase(predictor_name)) + A*ddS):")
-        
-        plot_dir = joinpath(output_dir, "scatter_plots", "rho_$(target_rho)")
-        if generate_plots
-            mkpath(plot_dir)
-        end
 
         for A in A_values
             # For self ddS
@@ -75,7 +77,7 @@ function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Flo
             println(io, "A=$A: Self=$(round(cor_self, digits=4)) [$(titlecase(predictor_name)):$(round(predictor_pct_self,digits=1))%, Entropy:$(round(entropy_pct_self,digits=1))%], Nearby=$(round(cor_nearby_A, digits=4)) [$(titlecase(predictor_name)):$(round(predictor_pct_nearby,digits=1))%, Entropy:$(round(entropy_pct_nearby,digits=1))%]")
 
             if generate_plots
-                plot_output_path = joinpath(plot_dir, "$(prefix)$(predictor_name)_scatter_A_$(A).png")
+                plot_output_path = joinpath(scatter_plots_dir, "$(prefix)$(predictor_name)_scatter_A_$(A).png")
                 plot_title = "$(titlecase(predictor_name)) ddG Correction"
                 plot_correction_scatter(merged_df.ddG, merged_df[!, scaled_predictor_col], combined_self, cor_self, A, plot_output_path, plot_title)
             end
@@ -83,4 +85,7 @@ function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Flo
     end
     
     println("Correlations saved to: $output_file")
+    if generate_plots
+        println("Scatter plots saved to: $scatter_plots_dir")
+    end
 end

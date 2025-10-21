@@ -80,6 +80,7 @@ end
     calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
 
 Calculate entropy terms for mutant and wild-type across all rounds using separate ρ values.
+Distance weighting (α) is hardcoded to 0.0, meaning no distance weighting is applied (d^0 = 1).
 """
 function calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
     mut_terms = zeros(length(round_data), length(indices))
@@ -97,8 +98,9 @@ function calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_da
 
                 if d_mut > 0.0 && d_wt > 0.0
                     # Use separate ρ values for mutant and wild-type
-                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - params.rho_mut) / (d_mut^params.α)
-                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - params.rho_wt) / (d_wt^params.α)
+                    # α is hardcoded to 0.0, so d^α = 1 (no distance weighting)
+                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - params.rho_mut)
+                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - params.rho_wt)
                 end
             end
         end
@@ -308,8 +310,14 @@ function calculate_ddgs(
     return exp_ddG, pred_ddG, rosetta_ddG
 end
 
-function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false)::DataFrame
+function process_entropy_data(datadir::String, plddt_threshold::Int, distance_threshold::Int, if_normalize::Bool, nearby_normalize::Bool, verbose::Bool=false)::DataFrame
     all_mutant_data = Dict{String, Dict{String, Float64}}()
+
+    # Construct parameter subdirectory name based on new structure
+    param_subdir = "plddt_$(plddt_threshold)_dist_$(distance_threshold)"
+    
+    # Determine JLD2 filename based on normalization
+    jld2_filename = if_normalize ? "entropy_norm.jld2" : "entropy.jld2"
 
     # Iterate through each mutant directory in the base data directory
     for mutant_dir_name in readdir(datadir)
@@ -322,17 +330,21 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         param_path = joinpath(mutant_path, param_subdir)
         
         if !isdir(param_path)
-            println("Parameter directory not found for mutant $mutant_dir_name: $param_path. Skipping...")
+            if verbose
+                println("Parameter directory not found for mutant $mutant_dir_name: $param_path. Skipping...")
+            end
             continue
         end
 
-        # Find the JLD2 file in the parameter directory
-        jld_files = filter(f -> endswith(f, ".jld2"), readdir(param_path))
-        if isempty(jld_files)
-            println("No JLD2 file found in $param_path. Skipping...")
+        # Construct the full filepath
+        filepath = joinpath(param_path, jld2_filename)
+        
+        if !isfile(filepath)
+            if verbose
+                println("JLD2 file not found for mutant $mutant_dir_name: $filepath. Skipping...")
+            end
             continue
         end
-        filepath = joinpath(param_path, first(jld_files))
 
         # Load data from the JLD2 file
         local temp
