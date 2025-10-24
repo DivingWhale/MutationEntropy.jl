@@ -253,6 +253,44 @@ function get_dist_map_legacy(datadir::String, mutation::String, round_val::Int; 
     return compute_single_distance_matrix_legacy(datadir, mutation, round_val)
 end
 
+function get_dist_maps_legacy(
+    mutation::String,
+    source_data_path::String;
+    verbose::Bool = false,
+    num_rounds::Int = 20,
+    cache_manager::Union{CacheManager,Nothing} = nothing,
+)::Tuple{Union{Vector{Matrix{Float64}}, Nothing}, CacheManager}
+    if cache_manager === nothing
+        cache_dir = joinpath(source_data_path, "cache")
+        cache_manager = get_cache_manager(cache_dir)
+    end
+
+    cached_dist = load_cached_data(cache_manager, mutation, :distance)
+    if cached_dist !== nothing
+        verbose && println("Loaded distance matrices for $mutation from cache.")
+        return cached_dist, cache_manager
+    end
+
+    verbose && println("Cache miss for distance matrices of $mutation. Reading from source.")
+    dist_matrices = Vector{Matrix{Float64}}()
+    for round_idx in 1:num_rounds
+        dist_matrix = compute_single_distance_matrix_legacy(source_data_path, mutation, round_idx)
+        if dist_matrix !== nothing
+            push!(dist_matrices, dist_matrix)
+        end
+    end
+
+    if isempty(dist_matrices)
+        verbose && @warn "No distance matrices found for $mutation."
+        return nothing, cache_manager
+    end
+
+    verbose && println("Saving distance matrices for $mutation to cache.")
+    save_cached_data(cache_manager, mutation, :distance, dist_matrices)
+    
+    return dist_matrices, cache_manager
+end
+
 function compute_dist_matrix_from_path(model_dir::String)
     if !isdir(model_dir)
         @warn "Model directory not found: $model_dir"

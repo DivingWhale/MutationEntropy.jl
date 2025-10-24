@@ -339,7 +339,7 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
             temp = jldopen(filepath, "r") do file
                 if !haskey(file, "data")
                     println("JLD2 file $filepath is missing the 'data' key. Skipping...")
-                    return # Use return to exit the outer loop's current iteration via the anonymous function
+                    return
                 end
                 file["data"]
             end
@@ -351,39 +351,84 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         # Extract metadata
         meta = temp["metadata"]
         mutant_name = lowercase(meta["mutant"])
-        mutation_pos = meta["mutation_position"]
+        
+        # Support both single and multi-mutation formats
+        mutation_positions = haskey(meta, "mutation_positions") ? 
+            meta["mutation_positions"] : [meta["mutation_position"]]
         offset = meta["residue_offset"]
 
         # Extract results data directly from the loaded data structure
         results = temp["results"]
 
-        # Calculate the ddS at the mutation site
-        index = mutation_pos - offset
-        local mutant_ddS
-        # Ensure index is within bounds
-        if index < 1 || index > length(results["all_residues"]["ddS_filtered"])
-            if verbose
-                println("Index $index is out of bounds for mutant $mutant_name. Skipping...")
+        # Calculate the ddS at all mutation sites (sum for multi-mutation)
+        local mutant_ddS = 0.0
+        for mutation_pos in mutation_positions
+            index = mutation_pos - offset
+            # Ensure index is within bounds
+            if index < 1 || index > length(results["all_residues"]["ddS_filtered"])
+                if verbose
+                    println("Index $index (position $mutation_pos) is out of bounds for mutant $mutant_name. Skipping this position...")
+                end
+                continue
             end
-            continue
-        else
-            mutant_ddS = results["all_residues"]["ddS_filtered"][index]
+            
+            val = results["all_residues"]["ddS_filtered"][index]
+            if !isnan(val)
+                mutant_ddS += val
+            elseif verbose
+                println("ddS at position $mutation_pos for $mutant_name is NaN. Skipping this position...")
+            end
         end
         
-        if isnan(mutant_ddS)
+        if isnan(mutant_ddS) || mutant_ddS == 0.0
             if verbose
-                println("mutant_ddS for $mutant_name is NaN. Skipping...")
+                println("Total mutant_ddS for $mutant_name is NaN or zero. Skipping...")
             end
             continue
         end
 
-        # Calculate the ddS of nearby residues
-        nearby_ddS_values = filter(!isnan, results["nearby_residues"]["ddS_filtered"])
-        nearby_ddS = sum(nearby_ddS_values)
+        # Calculate the ddS of nearby residues for all mutation sites
+        local nearby_ddS = 0.0
+        local nearby_count = 0
+        
+        # Check data format: new (per-position) or old (unified)
+        nearby_residues_data = results["nearby_residues"]
+        
+        if haskey(nearby_residues_data, "ddS_filtered")
+            # Old format: unified nearby residues with pre-computed ddS values
+            nearby_ddS_values = filter(!isnan, nearby_residues_data["ddS_filtered"])
+            nearby_ddS = sum(nearby_ddS_values)
+            nearby_count = length(nearby_ddS_values)
+        else
+            # New format: per-position nearby residues with indices
+            all_nearby_indices = Set{Int}()
+            
+            for mutation_pos in mutation_positions
+                position_key = "pos_$(mutation_pos)"
+                
+                if haskey(nearby_residues_data, position_key)
+                    position_data = nearby_residues_data[position_key]
+                    if haskey(position_data, "indices")
+                        union!(all_nearby_indices, position_data["indices"])
+                    end
+                end
+            end
+            
+            # Calculate ddS sum for all unique nearby residues
+            for idx in all_nearby_indices
+                if idx >= 1 && idx <= length(results["all_residues"]["ddS_filtered"])
+                    val = results["all_residues"]["ddS_filtered"][idx]
+                    if !isnan(val)
+                        nearby_ddS += val
+                        nearby_count += 1
+                    end
+                end
+            end
+        end
         
         # Normalize by count if flag is set
-        if nearby_normalize && !isempty(nearby_ddS_values)
-            nearby_ddS = nearby_ddS / length(nearby_ddS_values)
+        if nearby_normalize && nearby_count > 0
+            nearby_ddS = nearby_ddS / nearby_count
         end
 
         # Store the results in the dictionary
