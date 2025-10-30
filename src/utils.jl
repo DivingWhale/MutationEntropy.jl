@@ -215,3 +215,132 @@ function read_xvg(filename::String)::Vector{Tuple{Int, Float64}}
     end
     return results
 end
+
+#-----------------------------------------------------------------------------
+# Sequence Extraction and Sigma Calculation Functions
+#-----------------------------------------------------------------------------
+
+"""
+    extract_sequence_from_structure(structure)
+
+Extract one-letter amino acid sequence from a BioStructures structure.
+Uses BioSequences.LongAA for robust sequence extraction.
+Returns a string of one-letter amino acid codes.
+
+Note: The sequence starts from the first residue present in the PDB file.
+For Thermonuclease, PDB position 6 = biological 88, so sequence[1] corresponds
+to biological residue 88.
+"""
+function extract_sequence_from_structure(structure)::String
+    # Get the first model and first chain
+    model = first(structure)
+    chain = first(model)
+    
+    # Extract sequence using LongAA with standard selector
+    # standardselector filters out non-standard residues
+    seq = LongAA(chain, standardselector)
+    
+    return String(seq)
+end
+
+"""
+    parse_mutation_residue(mutation::String)
+
+Extract the mutated residue (one-letter code) from a mutation string.
+Example: "e75v" -> 'V'
+"""
+function parse_mutation_residue(mutation::String)::Char
+    # Mutation format: original_residue + position + mutated_residue
+    # e.g., "e75v" means position 75, E->V
+    mutation_lower = lowercase(mutation)
+    if length(mutation_lower) < 2
+        error("Invalid mutation format: $mutation")
+    end
+    
+    # Last character is the mutated residue
+    mutated_residue = uppercase(mutation_lower[end])
+    
+    return mutated_residue
+end
+
+"""
+    get_sigma(residue::Char)
+
+Get the sigma value for a given amino acid residue.
+Returns NaN for unknown residues.
+"""
+function get_sigma(residue::Char)::Float64
+    residue_upper = uppercase(residue)
+    if haskey(RESIDUE_SIGMA_MAP, residue_upper)
+        return RESIDUE_SIGMA_MAP[residue_upper]
+    else
+        @warn "Unknown residue for sigma lookup: $residue. Returning NaN."
+        return NaN
+    end
+end
+
+"""
+    calculate_sigma_ij(idx_i::Int, idx_j::Int, sequence::String, mutation_position::Int, mutation_residue::Char, matrix_start::Int)
+
+Calculate the average sigma value for a residue pair.
+For mutant calculations, replaces the WT residue at mutation_position with mutation_residue.
+
+Args:
+- idx_i, idx_j: Matrix indices (1-based, where 1 = first position in truncated matrix)
+- sequence: WT sequence extracted from PDB (already truncated to match matrix)
+- mutation_position: Biological residue number of mutation (e.g., 88 for Thermonuclease)
+- mutation_residue: Mutated residue (one-letter code), use ' ' for WT
+- matrix_start: First biological residue number in matrix (e.g., 88 for Thermonuclease)
+
+Simplified indexing:
+- matrix_idx 1 = biological position matrix_start
+- sequence[1] = biological position matrix_start
+- biological_position = matrix_idx + matrix_start - 1
+"""
+function calculate_sigma_ij(
+    idx_i::Int, 
+    idx_j::Int, 
+    sequence::String, 
+    mutation_position::Int, 
+    mutation_residue::Char,
+    matrix_start::Int
+)::Float64
+    # Matrix indices directly correspond to sequence positions
+    # because both start from the same truncation point
+    seq_pos_i = idx_i
+    seq_pos_j = idx_j
+    
+    # Check bounds
+    if seq_pos_i < 1 || seq_pos_i > length(sequence) || seq_pos_j < 1 || seq_pos_j > length(sequence)
+        @warn "Sequence position out of bounds: i=$seq_pos_i, j=$seq_pos_j, sequence length=$(length(sequence))"
+        return NaN
+    end
+    
+    # Get residues from WT sequence
+    residue_i = sequence[seq_pos_i]
+    residue_j = sequence[seq_pos_j]
+    
+    # If this is a mutant calculation (mutation_residue != ' '), 
+    # replace the residue at the mutation site
+    if mutation_residue != ' '
+        # Convert matrix indices to biological positions
+        bio_pos_i = idx_i + matrix_start - 1
+        bio_pos_j = idx_j + matrix_start - 1
+        
+        if bio_pos_i == mutation_position
+            residue_i = mutation_residue
+        end
+        if bio_pos_j == mutation_position
+            residue_j = mutation_residue
+        end
+    end
+    
+    sigma_i = get_sigma(residue_i)
+    sigma_j = get_sigma(residue_j)
+    
+    if isnan(sigma_i) || isnan(sigma_j)
+        return NaN
+    end
+    
+    return (sigma_i + sigma_j) / 2.0
+end

@@ -77,13 +77,22 @@ function filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::Str
 end
 
 """
-    calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
+    calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams, data::MutationData)
 
-Calculate entropy terms for mutant and wild-type across all rounds.
+Calculate entropy terms for mutant and wild-type across all rounds with sigma weighting.
 """
-function calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams)
+function calculate_entropy_terms(
+    matrix_idx::Int, 
+    indices::Vector{Int}, 
+    round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, 
+    params::EntropyParams,
+    data::MutationData
+)
     mut_terms = zeros(length(round_data), length(indices))
     wt_terms = zeros(length(round_data), length(indices))
+    
+    # Parse mutation position for sigma calculation
+    mutation_position = params.position
     
     for (round_idx, (PAE_mut, PAE_wt, dist_mut, dist_wt)) in enumerate(round_data)
         for (term_idx, i) in enumerate(indices)
@@ -96,8 +105,23 @@ function calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_da
                 d_wt = dist_wt[matrix_idx, i]
 
                 if d_mut > 0.0 && d_wt > 0.0
-                    mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - params.rho) / (d_mut^params.α)
-                    wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - params.rho) / (d_wt^params.α)
+                    # Calculate sigma_ij for WT (no mutation)
+                    if !isempty(data.wt_sequence)
+                        sigma_ij_wt = calculate_sigma_ij(matrix_idx, i, data.wt_sequence, mutation_position, ' ', params.matrix_start)
+                        
+                        # Calculate sigma_ij for mutant (with mutation)
+                        sigma_ij_mut = calculate_sigma_ij(matrix_idx, i, data.wt_sequence, mutation_position, data.mutation_residue, params.matrix_start)
+                        
+                        # Apply sigma weighting: (PAE * sigma_ij)^(2 - rho) / d^α
+                        if !isnan(sigma_ij_wt) && !isnan(sigma_ij_mut)
+                            mut_terms[round_idx, term_idx] = (PAE_mut[matrix_idx, i] * sigma_ij_mut)^(2 - params.rho) / (d_mut^params.α)
+                            wt_terms[round_idx, term_idx] = (PAE_wt[matrix_idx, i] * sigma_ij_wt)^(2 - params.rho) / (d_wt^params.α)
+                        end
+                    else
+                        # Fallback to original formula if no sequence information
+                        mut_terms[round_idx, term_idx] = PAE_mut[matrix_idx, i]^(2 - params.rho) / (d_mut^params.α)
+                        wt_terms[round_idx, term_idx] = PAE_wt[matrix_idx, i]^(2 - params.rho) / (d_wt^params.α)
+                    end
                 end
             end
         end
@@ -118,8 +142,8 @@ in the analysis region.
 """
 function ΔΔS(params::EntropyParams, data::MutationData, self_normalize::Bool)::Float64
     # Convert biological residue number to matrix index for truncated matrices
-    # For Thermonuclease: position=88, offset=87 → matrix_idx=1 (first position in truncated matrix)
-    matrix_idx = params.position - params.offset
+    # For Thermonuclease: position=88, matrix_start=88 → matrix_idx=1 (first position)
+    matrix_idx = params.position - params.matrix_start + 1
     
     # First layer filtering: check if the current position itself has low pLDDT
     if params.filter_low_plddt
@@ -191,7 +215,7 @@ function ΔΔS(params::EntropyParams, data::MutationData, self_normalize::Bool):
     end
     
     # Calculate entropy terms
-    mut_terms, wt_terms = calculate_entropy_terms(matrix_idx, indices, round_data, params)
+    mut_terms, wt_terms = calculate_entropy_terms(matrix_idx, indices, round_data, params, data)
     
     # Calculate final result
     avg_mut_terms = mean(mut_terms, dims = 1)[1, :]
@@ -224,7 +248,7 @@ function process_single_mutation(
     rho::Float64,
     A::Float64,
     α::Float64,
-    offset::Int,
+    matrix_start::Int,  # First biological residue in truncated matrix (e.g., 88)
     verbose::Bool,
     data_dir::String = "",
     filter_low_plddt::Bool = false,
@@ -257,7 +281,7 @@ function process_single_mutation(
     
     # Create structured data
     data = MutationData(wt_pae, paes[mutation], wt_dist, dist_matrices[mutation], mutation)
-    params = EntropyParams(position, rho, α, offset, filter_low_plddt, plddt_threshold, data_dir)
+    params = EntropyParams(position, rho, α, matrix_start, filter_low_plddt, plddt_threshold, data_dir)
     
     ΔΔS_val = ΔΔS(params, data)
     predicted_ddG = ΔΔG_prime(A, ΔΔS_val, ddG)
@@ -277,7 +301,7 @@ function calculate_ddgs(
     rho::Float64,
     A::Float64,
     α::Float64,
-    offset::Int;
+    matrix_start::Int;  # First biological residue in truncated matrix (e.g., 88)
     verbose::Bool = false,
     data_dir::String = "",
     filter_low_plddt::Bool = false,
@@ -288,7 +312,7 @@ function calculate_ddgs(
 
     for m in mutations
         position = parse_mutation_position(m)
-        result = process_single_mutation(m, position, single_ddG, wt_pae, wt_dist, paes, dist_matrices, ddG_exp, rho, A, α, offset, verbose, data_dir, filter_low_plddt, plddt_threshold)
+        result = process_single_mutation(m, position, single_ddG, wt_pae, wt_dist, paes, dist_matrices, ddG_exp, rho, A, α, matrix_start, verbose, data_dir, filter_low_plddt, plddt_threshold)
         
         if result !== nothing && !isnan(last(result))
             push!(results, result)

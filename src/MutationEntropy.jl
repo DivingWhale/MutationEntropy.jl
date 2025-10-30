@@ -1,6 +1,7 @@
 module MutationEntropy
 
 using BioStructures, LinearAlgebra
+using BioSequences
 using CairoMakie
 using Glob
 using JSON
@@ -19,6 +20,9 @@ export read_coordinates, read_xvg, calculate_ddgs, ΔΔS, read_mutations_from_fi
 export perform_correlation_analysis, process_entropy_data, plot_correction_scatter
 export get_residue_calpha_b_factor
 
+# Sequence and sigma calculation exports
+export extract_sequence_from_structure, parse_mutation_residue, get_sigma, calculate_sigma_ij
+
 # New structured data exports
 export MutationData, EntropyParams
 
@@ -28,6 +32,7 @@ export has_cached_data, load_cached_data, save_cached_data
 export preload_cached_data, clear_cache, clear_all_cache
 export get_cache_stats, print_cache_stats, get_cache_size_info
 
+include("constants.jl")
 include("types.jl")
 include("utils.jl")
 include("cache_manager.jl")
