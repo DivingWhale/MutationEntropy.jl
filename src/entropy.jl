@@ -115,8 +115,8 @@ function calculate_entropy_terms(
                         
                         # Apply sigma weighting: (PAE * sigma_ij)^(2 - rho) / d^α
                         if !isnan(sigma_ij_wt) && !isnan(sigma_ij_mut)
-                            mut_terms[round_idx, term_idx] = (PAE_mut[matrix_idx, i] * sigma_ij_mut)^(2 - params.rho) / (d_mut^params.α)
-                            wt_terms[round_idx, term_idx] = (PAE_wt[matrix_idx, i] * sigma_ij_wt)^(2 - params.rho) / (d_wt^params.α)
+                            mut_terms[round_idx, term_idx] = (PAE_mut[matrix_idx, i] / sigma_ij_mut)^(2 - params.rho) / (d_mut^params.α)
+                            wt_terms[round_idx, term_idx] = (PAE_wt[matrix_idx, i] / sigma_ij_wt)^(2 - params.rho) / (d_wt^params.α)
                         end
                     else
                         # Fallback to original formula if no sequence information
