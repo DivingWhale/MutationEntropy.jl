@@ -310,9 +310,10 @@ function calculate_sigma_ij(
     seq_pos_i = idx_i
     seq_pos_j = idx_j
     
-    # Check bounds
+    # Bounds check (should not trigger if matrices are properly truncated)
     if seq_pos_i < 1 || seq_pos_i > length(sequence) || seq_pos_j < 1 || seq_pos_j > length(sequence)
-        @warn "Sequence position out of bounds: i=$seq_pos_i, j=$seq_pos_j, sequence length=$(length(sequence))"
+        # This should not happen if matrices are pre-truncated to sequence length
+        @debug "Sequence position out of bounds: i=$seq_pos_i, j=$seq_pos_j, sequence length=$(length(sequence)). Returning NaN."
         return NaN
     end
     

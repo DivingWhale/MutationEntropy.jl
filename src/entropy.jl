@@ -80,6 +80,7 @@ end
     calculate_entropy_terms(matrix_idx::Int, indices::Vector{Int}, round_data::Vector{Tuple{Matrix{Float64}, Matrix{Float64}, Matrix{Float64}, Matrix{Float64}}}, params::EntropyParams, data::MutationData)
 
 Calculate entropy terms for mutant and wild-type across all rounds with sigma weighting.
+Note: Assumes matrices have been pre-truncated to match sequence length.
 """
 function calculate_entropy_terms(
     matrix_idx::Int, 
@@ -376,13 +377,14 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         meta = temp["metadata"]
         mutant_name = lowercase(meta["mutant"])
         mutation_pos = meta["mutation_position"]
-        offset = meta["residue_offset"]
+        matrix_start = meta["matrix_start"]
 
         # Extract results data directly from the loaded data structure
         results = temp["results"]
 
         # Calculate the ddS at the mutation site
-        index = mutation_pos - offset
+        # Convert biological position to matrix index: bio_pos - matrix_start + 1
+        index = mutation_pos - matrix_start + 1
         local mutant_ddS
         # Ensure index is within bounds
         if index < 1 || index > length(results["all_residues"]["ddS_filtered"])
