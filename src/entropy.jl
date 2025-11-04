@@ -353,21 +353,32 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         mutant_name = lowercase(meta["mutant"])
         
         # Support both single and multi-mutation formats
-        mutation_positions = haskey(meta, "mutation_positions") ? 
-            meta["mutation_positions"] : [meta["mutation_position"]]
+        mutation_positions_bio = haskey(meta, "mutation_positions_bio") ? 
+            meta["mutation_positions_bio"] : 
+            (haskey(meta, "mutation_positions") ? 
+                meta["mutation_positions"] : [meta["mutation_position"]])
+        
+        # Get residue_offset for index calculation
         offset = meta["residue_offset"]
+        
+        # Get residue_numbers_bio for mapping if available
+        residue_info = get(temp, "residue_info", Dict())
+        residue_numbers_bio = get(residue_info, "residue_numbers_bio", nothing)
 
         # Extract results data directly from the loaded data structure
         results = temp["results"]
 
         # Calculate the ddS at all mutation sites (sum for multi-mutation)
         local mutant_ddS = 0.0
-        for mutation_pos in mutation_positions
-            index = mutation_pos - offset
+        for mutation_pos_bio in mutation_positions_bio
+            # Convert biological position to matrix index
+            # Bio position - offset = matrix index (e.g., bio 88 - 87 = matrix index 1)
+            index = mutation_pos_bio - offset
+            
             # Ensure index is within bounds
             if index < 1 || index > length(results["all_residues"]["ddS_filtered"])
                 if verbose
-                    println("Index $index (position $mutation_pos) is out of bounds for mutant $mutant_name. Skipping this position...")
+                    println("Index $index (bio position $mutation_pos_bio) is out of bounds for mutant $mutant_name. Skipping this position...")
                 end
                 continue
             end
@@ -376,7 +387,7 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
             if !isnan(val)
                 mutant_ddS += val
             elseif verbose
-                println("ddS at position $mutation_pos for $mutant_name is NaN. Skipping this position...")
+                println("ddS at bio position $mutation_pos_bio (index $index) for $mutant_name is NaN. Skipping this position...")
             end
         end
         
@@ -391,39 +402,38 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         local nearby_ddS = 0.0
         local nearby_count = 0
         
-        # Check data format: new (per-position) or old (unified)
+        # New format: per-position nearby residues with indices
         nearby_residues_data = results["nearby_residues"]
+        all_nearby_indices = Set{Int}()
         
-        if haskey(nearby_residues_data, "ddS_filtered")
-            # Old format: unified nearby residues with pre-computed ddS values
-            nearby_ddS_values = filter(!isnan, nearby_residues_data["ddS_filtered"])
-            nearby_ddS = sum(nearby_ddS_values)
-            nearby_count = length(nearby_ddS_values)
-        else
-            # New format: per-position nearby residues with indices
-            all_nearby_indices = Set{Int}()
+        for mutation_pos_bio in mutation_positions_bio
+            position_key = "pos_$(mutation_pos_bio)"
             
-            for mutation_pos in mutation_positions
-                position_key = "pos_$(mutation_pos)"
-                
-                if haskey(nearby_residues_data, position_key)
-                    position_data = nearby_residues_data[position_key]
-                    if haskey(position_data, "indices")
-                        union!(all_nearby_indices, position_data["indices"])
-                    end
+            if haskey(nearby_residues_data, position_key)
+                position_data = nearby_residues_data[position_key]
+                if haskey(position_data, "indices")
+                    union!(all_nearby_indices, position_data["indices"])
                 end
+            elseif verbose
+                println("Warning: No nearby residues data found for position $mutation_pos_bio (key: $position_key) in mutant $mutant_name")
             end
-            
-            # Calculate ddS sum for all unique nearby residues
-            for idx in all_nearby_indices
-                if idx >= 1 && idx <= length(results["all_residues"]["ddS_filtered"])
-                    val = results["all_residues"]["ddS_filtered"][idx]
-                    if !isnan(val)
-                        nearby_ddS += val
-                        nearby_count += 1
-                    end
+        end
+        
+        # Calculate ddS sum for all unique nearby residues
+        for idx in all_nearby_indices
+            if idx >= 1 && idx <= length(results["all_residues"]["ddS_filtered"])
+                val = results["all_residues"]["ddS_filtered"][idx]
+                if !isnan(val)
+                    nearby_ddS += val
+                    nearby_count += 1
                 end
+            elseif verbose
+                println("Warning: Index $idx is out of bounds for mutant $mutant_name")
             end
+        end
+        
+        if verbose && nearby_count == 0
+            println("Warning: No valid nearby residues found for mutant $mutant_name")
         end
         
         # Normalize by count if flag is set
