@@ -264,25 +264,9 @@ function parse_mutation_residue(mutation::String)::Char
 end
 
 """
-    get_sigma(residue::Char)
-
-Get the sigma value for a given amino acid residue.
-Returns NaN for unknown residues.
-"""
-function get_sigma(residue::Char)::Float64
-    residue_upper = uppercase(residue)
-    if haskey(RESIDUE_SIGMA_MAP, residue_upper)
-        return RESIDUE_SIGMA_MAP[residue_upper]
-    else
-        @warn "Unknown residue for sigma lookup: $residue. Returning NaN."
-        return NaN
-    end
-end
-
-"""
     calculate_sigma_ij(idx_i::Int, idx_j::Int, sequence::String, mutation_position::Int, mutation_residue::Char, matrix_start::Int)
 
-Calculate the average sigma value for a residue pair.
+Calculate the normalized sigma_ij value for a residue pair using the precomputed matrix.
 For mutant calculations, replaces the WT residue at mutation_position with mutation_residue.
 
 Args:
@@ -292,10 +276,8 @@ Args:
 - mutation_residue: Mutated residue (one-letter code), use ' ' for WT
 - matrix_start: First biological residue number in matrix (e.g., 88 for Thermonuclease)
 
-Simplified indexing:
-- matrix_idx 1 = biological position matrix_start
-- sequence[1] = biological position matrix_start
-- biological_position = matrix_idx + matrix_start - 1
+Returns:
+- Normalized sigma_ij value from the precomputed constant matrix
 """
 function calculate_sigma_ij(
     idx_i::Int, 
@@ -306,13 +288,11 @@ function calculate_sigma_ij(
     matrix_start::Int
 )::Float64
     # Matrix indices directly correspond to sequence positions
-    # because both start from the same truncation point
     seq_pos_i = idx_i
     seq_pos_j = idx_j
     
-    # Bounds check (should not trigger if matrices are properly truncated)
+    # Bounds check
     if seq_pos_i < 1 || seq_pos_i > length(sequence) || seq_pos_j < 1 || seq_pos_j > length(sequence)
-        # This should not happen if matrices are pre-truncated to sequence length
         @debug "Sequence position out of bounds: i=$seq_pos_i, j=$seq_pos_j, sequence length=$(length(sequence)). Returning NaN."
         return NaN
     end
@@ -336,12 +316,22 @@ function calculate_sigma_ij(
         end
     end
     
-    sigma_i = get_sigma(residue_i)
-    sigma_j = get_sigma(residue_j)
+    # Look up sigma_ij from precomputed matrix
+    res_i_upper = uppercase(residue_i)
+    res_j_upper = uppercase(residue_j)
     
-    if isnan(sigma_i) || isnan(sigma_j)
+    if !haskey(RESIDUE_TO_INDEX, res_i_upper)
+        @warn "Unknown residue for sigma_ij lookup: $residue_i. Returning NaN."
         return NaN
     end
     
-    return (sigma_i + sigma_j) / 2.0
+    if !haskey(RESIDUE_TO_INDEX, res_j_upper)
+        @warn "Unknown residue for sigma_ij lookup: $residue_j. Returning NaN."
+        return NaN
+    end
+    
+    idx_res_i = RESIDUE_TO_INDEX[res_i_upper]
+    idx_res_j = RESIDUE_TO_INDEX[res_j_upper]
+    
+    return SIGMA_IJ_NORMALIZED[idx_res_i, idx_res_j]
 end

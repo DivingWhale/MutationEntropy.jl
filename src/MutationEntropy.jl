@@ -21,7 +21,7 @@ export perform_correlation_analysis, process_entropy_data, plot_correction_scatt
 export get_residue_calpha_b_factor
 
 # Sequence and sigma calculation exports
-export extract_sequence_from_structure, parse_mutation_residue, get_sigma, calculate_sigma_ij
+export extract_sequence_from_structure, parse_mutation_residue, calculate_sigma_ij
 
 # New structured data exports
 export MutationData, EntropyParams
