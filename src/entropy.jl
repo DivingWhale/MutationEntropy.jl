@@ -58,10 +58,11 @@ function filter_low_plddt_residues_per_round(indices::Vector{Int}, mutation::Str
             try
                 low_plddt_residues = get_low_plddt_residues(mut_id, round_idx, datadir, threshold=params.plddt_threshold)
                 if !isempty(low_plddt_residues)
-                    # Convert full sequence residue numbers to matrix indices
-                    # Full sequence residue 88 -> matrix index 1, 89 -> 2, etc.
-                    # So matrix_index = full_seq_residue - 87
-                    low_plddt_matrix_indices = [r - 87 for r in low_plddt_residues if r >= 88]  # Only include residues in PDB region
+                    # Convert PDB residue numbers to matrix indices
+                    # PDB residue number -> matrix index using the offset from params
+                    # matrix_index = pdb_resnum - offset
+                    first_pdb_in_matrix = params.offset + 1  # First PDB residue in truncated matrix
+                    low_plddt_matrix_indices = [r - params.offset for r in low_plddt_residues if r >= first_pdb_in_matrix]
                     union!(all_low_plddt, low_plddt_matrix_indices)
                 end
             catch e
