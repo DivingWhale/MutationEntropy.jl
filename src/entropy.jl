@@ -308,7 +308,18 @@ function calculate_ddgs(
     return exp_ddG, pred_ddG, rosetta_ddG
 end
 
-function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false)::DataFrame
+"""
+    process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false; auto_detect::Bool=true)::DataFrame
+
+Process entropy data from saved JLD2 files.
+
+When `auto_detect=true` (default), automatically detects the data format:
+- New format: Uses mutation_id directly as matrix index
+- Old format: Uses mutation_position - residue_offset as matrix index
+
+When `auto_detect=false`, assumes old format (mutation_position and residue_offset).
+"""
+function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false; auto_detect::Bool=true)::DataFrame
     all_mutant_data = Dict{String, Dict{String, Float64}}()
 
     # Iterate through each mutant directory in the base data directory
@@ -322,14 +333,18 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         param_path = joinpath(mutant_path, param_subdir)
         
         if !isdir(param_path)
-            println("Parameter directory not found for mutant $mutant_dir_name: $param_path. Skipping...")
+            if verbose
+                println("Parameter directory not found for mutant $mutant_dir_name: $param_path. Skipping...")
+            end
             continue
         end
 
         # Find the JLD2 file in the parameter directory
         jld_files = filter(f -> endswith(f, ".jld2"), readdir(param_path))
         if isempty(jld_files)
-            println("No JLD2 file found in $param_path. Skipping...")
+            if verbose
+                println("No JLD2 file found in $param_path. Skipping...")
+            end
             continue
         end
         filepath = joinpath(param_path, first(jld_files))
@@ -340,35 +355,57 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
             temp = jldopen(filepath, "r") do file
                 if !haskey(file, "data")
                     println("JLD2 file $filepath is missing the 'data' key. Skipping...")
-                    return # Use return to exit the outer loop's current iteration via the anonymous function
+                    return nothing
                 end
                 file["data"]
+            end
+            if temp === nothing
+                continue
             end
         catch e
             println("Failed to open or read JLD2 file $filepath. Error: $e. Skipping...")
             continue
         end
 
-        # Extract metadata
+        # Extract metadata and detect data format
         meta = temp["metadata"]
         mutant_name = lowercase(meta["mutant"])
-        mutation_pos = meta["mutation_position"]
-        offset = meta["residue_offset"]
+        
+        # Determine mutation matrix index based on data format
+        local mutation_matrix_idx::Int
+        
+        if auto_detect && haskey(meta, "mutation_id")
+            # New format: using mutation_id (1-based after truncation)
+            mutation_id = meta["mutation_id"]
+            mutation_matrix_idx = mutation_id  # mutation_id equals matrix index
+            if verbose
+                println("Processing $mutant_name: new format (mutation_id=$mutation_id)")
+            end
+        elseif haskey(meta, "mutation_position") && haskey(meta, "residue_offset")
+            # Old format: using mutation_position (biological/PDB number) and offset
+            mutation_position = meta["mutation_position"]
+            offset = meta["residue_offset"]
+            mutation_matrix_idx = mutation_position - offset
+            if verbose
+                println("Processing $mutant_name: old format (position=$mutation_position, offset=$offset, matrix_idx=$mutation_matrix_idx)")
+            end
+        else
+            println("Unknown data format for mutant $mutant_name. Skipping...")
+            continue
+        end
 
-        # Extract results data directly from the loaded data structure
+        # Extract results data
         results = temp["results"]
 
-        # Calculate the ddS at the mutation site
-        index = mutation_pos - offset
+        # Get ddS at the mutation site using matrix index
         local mutant_ddS
-        # Ensure index is within bounds
-        if index < 1 || index > length(results["all_residues"]["ddS_filtered"])
+        if mutation_matrix_idx < 1 || mutation_matrix_idx > length(results["all_residues"]["ddS_filtered"])
             if verbose
-                println("Index $index is out of bounds for mutant $mutant_name. Skipping...")
+                println("Matrix index $mutation_matrix_idx is out of bounds for mutant $mutant_name. Skipping...")
             end
             continue
         else
-            mutant_ddS = results["all_residues"]["ddS_filtered"][index]
+            mutant_ddS = results["all_residues"]["ddS_filtered"][mutation_matrix_idx]
         end
         
         if isnan(mutant_ddS)
