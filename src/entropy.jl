@@ -230,6 +230,7 @@ function process_single_mutation(
     data_dir::String = "",
     filter_low_plddt::Bool = false,
     plddt_threshold::Float64 = 90.0,
+    self_normalize::Bool = false,
 )::Union{Tuple{Float64,Float64,Float64},Nothing}
     mutation_upper = uppercase(mutation)
     
@@ -260,7 +261,7 @@ function process_single_mutation(
     data = MutationData(wt_pae, paes[mutation], wt_dist, dist_matrices[mutation], mutation)
     params = EntropyParams(position, rho, α, offset, filter_low_plddt, plddt_threshold, data_dir)
     
-    ΔΔS_val = ΔΔS(params, data)
+    ΔΔS_val = ΔΔS(params, data, self_normalize)
     predicted_ddG = ΔΔG_prime(A, ΔΔS_val, ddG)
     
     return (experimental_ddG, predicted_ddG, ddG)
@@ -283,13 +284,14 @@ function calculate_ddgs(
     data_dir::String = "",
     filter_low_plddt::Bool = false,
     plddt_threshold::Float64 = 90.0,
+    self_normalize::Bool = false,
 )::Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}
     mutations = read_mutations_from_file(task_file_path)
     results = Vector{Tuple{Float64,Float64,Float64}}()
 
     for m in mutations
         position = parse_mutation_position(m)
-        result = process_single_mutation(m, position, single_ddG, wt_pae, wt_dist, paes, dist_matrices, ddG_exp, rho, A, α, offset, verbose, data_dir, filter_low_plddt, plddt_threshold)
+        result = process_single_mutation(m, position, single_ddG, wt_pae, wt_dist, paes, dist_matrices, ddG_exp, rho, A, α, offset, verbose, data_dir, filter_low_plddt, plddt_threshold, self_normalize)
         
         if result !== nothing && !isnan(last(result))
             push!(results, result)
