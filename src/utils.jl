@@ -5,6 +5,80 @@ end
 
 parse_mutation_position(mutation::AbstractString)::Int = parse(Int, match(r"\d+", mutation).match)
 
+"""
+    is_multi_mutation(mutation::String)::Bool
+
+Check if a mutation string represents multiple mutations (contains underscore).
+
+# Examples
+```julia
+is_multi_mutation("a94g")        # false (single mutation)
+is_multi_mutation("a94g_d134h")  # true (multi mutation)
+```
+"""
+function is_multi_mutation(mutation::String)::Bool
+    return contains(mutation, "_")
+end
+
+"""
+    parse_multi_mutation(mutation::String)::Vector{Tuple{Int, Char, Char}}
+
+Parse a mutation string (single or multi) into a vector of (position, from_aa, to_aa) tuples.
+
+# Arguments
+- `mutation::String`: Mutation string in format "a94g" or "a94g_d134h"
+
+# Returns
+- `Vector{Tuple{Int, Char, Char}}`: Vector of (position, from_aa, to_aa) tuples
+
+# Examples
+```julia
+parse_multi_mutation("a94g")        # [(94, 'a', 'g')]
+parse_multi_mutation("a94g_d134h")  # [(94, 'a', 'g'), (134, 'd', 'h')]
+```
+"""
+function parse_multi_mutation(mutation::String)::Vector{Tuple{Int, Char, Char}}
+    mutations = split(lowercase(mutation), '_')
+    result = Tuple{Int, Char, Char}[]
+    
+    for mut in mutations
+        # Match pattern: letter + numbers + letter (e.g., "a94g")
+        m = match(r"^([a-z])(\d+)([a-z])$", mut)
+        if m !== nothing
+            from_aa = m.captures[1][1]
+            position = parse(Int, m.captures[2])
+            to_aa = m.captures[3][1]
+            push!(result, (position, from_aa, to_aa))
+        else
+            @warn "Invalid mutation format: $mut in $mutation"
+        end
+    end
+    
+    return result
+end
+
+"""
+    parse_mutation_positions(mutation::String)::Vector{Int}
+
+Extract all mutation positions from a mutation string.
+
+# Arguments
+- `mutation::String`: Mutation string in format "a94g" or "a94g_d134h"
+
+# Returns
+- `Vector{Int}`: Vector of position numbers
+
+# Examples
+```julia
+parse_mutation_positions("a94g")        # [94]
+parse_mutation_positions("a94g_d134h")  # [94, 134]
+```
+"""
+function parse_mutation_positions(mutation::String)::Vector{Int}
+    parsed = parse_multi_mutation(mutation)
+    return [pos for (pos, _, _) in parsed]
+end
+
 function read_mutations_from_file(task_file_path::String)::Vector{String}
     return [strip(line) for line in eachline(task_file_path) if !isempty(strip(line))]
 end
