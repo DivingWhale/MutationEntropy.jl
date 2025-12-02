@@ -198,20 +198,63 @@ function read_coordinates(filename::String)::Vector{Vector{Float64}}
 end
 
 """
-    read_xvg(filename)
+    write_b_factors_to_pdb(input_pdb::String, output_pdb::String, residue_b_factors::Dict{Int, Float64})
 
-Parses a generic .xvg file, returning a vector of (Int, Float64) tuples.
+Write B-factor values to specific residues in a PDB file.
+
+# Arguments
+- `input_pdb`: Path to input PDB file
+- `output_pdb`: Path to output PDB file
+- `residue_b_factors`: Dictionary mapping residue positions to B-factor values
 """
-function read_xvg(filename::String)::Vector{Tuple{Int, Float64}}
-    results = Tuple{Int, Float64}[]
-    for line in eachline(filename)
-        if startswith(line, ('#', '@')) || isempty(line)
-            continue
-        end
-        parts = split(line)
-        if length(parts) >= 2
-            push!(results, (parse(Int, parts[1]), parse(Float64, parts[2])))
+function write_b_factors_to_pdb(input_pdb::String, output_pdb::String, residue_b_factors::Dict{Int, Float64})
+    structure = read(input_pdb, PDBFormat)
+
+    open(output_pdb, "w") do io
+        for model in structure
+            for chain in model
+                for residue in chain
+                    # Skip hetero atoms (water, ligands, etc.)
+                    if BioStructures.ishetero(residue)
+                        continue
+                    end
+
+                    # Try to parse residue ID, skip if it fails
+                    res_id_str = BioStructures.resid(residue)
+                    res_id = try
+                        parse(Int, res_id_str)
+                    catch e
+                        @warn "Skipping residue with non-numeric ID: $res_id_str"
+                        continue
+                    end
+
+                    b_factor = get(residue_b_factors, res_id, 0.0)
+
+                    for atom in residue
+                        # Handle disordered atoms by selecting the default conformation
+                        cur_atom = BioStructures.isdisorderedatom(atom) ? BioStructures.defaultatom(atom) : atom
+
+                        # Write atom line with B-factor in columns 61-66
+                        coords = cur_atom.coords
+                        line = @sprintf("ATOM  %5d %-4s%1s%3s %1s%4d%1s   %8.3f%8.3f%8.3f%6.2f%6.2f          %2s",
+                                cur_atom.serial,
+                                cur_atom.name,
+                                cur_atom.alt_loc_id,
+                                residue.name,
+                                BioStructures.chainid(chain),
+                                res_id,
+                                residue.ins_code,
+                                coords[1],
+                                coords[2],
+                                coords[3],
+                                cur_atom.occupancy,
+                                b_factor,
+                                cur_atom.element)
+                        println(io, line)
+                    end
+                end
+            end
         end
     end
-    return results
+    println("B-factors written to: $output_pdb")
 end
