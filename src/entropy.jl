@@ -369,18 +369,19 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
 
         # Extract metadata and detect data format
         meta = temp["metadata"]
-        mutant_name = lowercase(meta["mutant"])
+        mutant_name = uppercase(meta["mutant"])  # Use uppercase for consistency with experimental data
         
         # Determine mutation matrix index based on data format
         local mutation_matrix_idx::Int
         
         # Detect format: new format has "indexing_info" dict
         if auto_detect && haskey(meta, "indexing_info")
-            # New format: mutation_position is actually mutation_id (1-based matrix index)
-            mutation_id = meta["mutation_position"]
-            mutation_matrix_idx = mutation_id
+            # New format: use mutation_position and subtract matrix_offset to get matrix index
+            mutation_position = meta["mutation_position"]
+            matrix_offset = meta["indexing_info"]["matrix_offset"]
+            mutation_matrix_idx = mutation_position - matrix_offset
             if verbose
-                println("Processing $mutant_name: new format (mutation_id=$mutation_id)")
+                println("Processing $mutant_name: new format (position=$mutation_position, matrix_offset=$matrix_offset, matrix_idx=$mutation_matrix_idx)")
             end
         elseif haskey(meta, "mutation_position") && haskey(meta, "residue_offset")
             # Old format: mutation_position is biological/PDB number, need to subtract offset
