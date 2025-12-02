@@ -1,3 +1,135 @@
+"""
+    calculate_mse_per_position(merged_df::DataFrame, ddG_corrected::Vector{Float64})
+
+Calculate Mean Squared Error (MSE) for each position (residue site) based on corrected ddG values.
+
+Returns a DataFrame with columns: position, mse, n_mutations, and a result DataFrame with position, error, corrected_ddG
+"""
+function calculate_mse_per_position(merged_df::DataFrame, ddG_corrected::Vector{Float64})
+    # Add position column if it doesn't exist
+    if !(:position in names(merged_df))
+        merged_df[!, :position] = [parse_mutation_position(m) for m in merged_df.mutant]
+    end
+
+    # Calculate error (difference)
+    errors = ddG_corrected .- merged_df.ddG
+
+    # Add error column to DataFrame
+    result_df = copy(merged_df)
+    result_df[!, :error] = errors
+    result_df[!, :corrected_ddG] = ddG_corrected
+
+    # Calculate MSE per position
+    mse_df = combine(DataFrames.groupby(result_df, :position),
+        :error => (x -> mean(x.^2)) => :mse,
+        :error => length => :n_mutations
+    )
+
+    return mse_df, result_df
+end
+
+"""
+    plot_violin_by_position(result_df::DataFrame, predictor_name::String, output_path::String, A::Float64)
+
+Create violin plots showing error distribution for each mutated position.
+Handles >20 sites by creating multiple subplots with 20 sites per row.
+Uses mean value (red line) instead of median.
+
+# Arguments
+- `result_df`: DataFrame containing position and error columns
+- `predictor_name`: Name of the predictor (e.g., "rosetta", "foldx")
+- `output_path`: Path to save the plot
+- `A`: The A parameter value used for correction
+"""
+function plot_violin_by_position(result_df::DataFrame, predictor_name::String, output_path::String, A::Float64)
+    mkpath(dirname(output_path))
+
+    # Get all positions and sort them
+    all_positions = sort(unique(result_df.position))
+    n_positions = length(all_positions)
+    sites_per_row = 20
+    n_rows = ceil(Int, n_positions / sites_per_row)
+
+    # Calculate figure size - much larger to accommodate bigger fonts
+    subplot_width = 3200  # Much larger width for 20 sites with big fonts
+    subplot_height = 1200  # Much larger height per row
+    fig = Figure(size=(subplot_width, subplot_height * n_rows))
+
+    # Calculate global y-axis range across all positions for consistent scaling
+    all_errors = result_df.error
+    y_min = minimum(all_errors)
+    y_max = maximum(all_errors)
+    y_range = y_max - y_min
+    y_padding = y_range * 0.1  # 10% padding
+    y_limits = (y_min - y_padding, y_max + y_padding)
+
+    # Create subplots
+    for row_idx in 1:n_rows
+        start_idx = (row_idx - 1) * sites_per_row + 1
+        end_idx = min(row_idx * sites_per_row, n_positions)
+        positions_subset = all_positions[start_idx:end_idx]
+
+        # Create subplot with consistent y-axis limits and larger fonts
+        ax = Axis(fig[row_idx, 1],
+            title="Sites $(positions_subset[1])-$(positions_subset[end])",
+            xlabel="Residue Position",
+            ylabel="ddG_corrected - ddG_exp",
+            limits=(nothing, y_limits),  # Use global y-limits for consistency
+            titlesize=28,         # Much larger title font
+            xlabelsize=24,        # Larger x-axis label font
+            ylabelsize=24,        # Larger y-axis label font
+            xticklabelsize=20,    # Larger x-axis tick labels
+            yticklabelsize=20)    # Larger y-axis tick labels
+
+        # Set y-axis to clip violins that extend beyond limits
+        ax.ytickformat = xs -> [string(round(x, digits=1)) for x in xs]
+
+        # Filter data for this subset of positions
+        subset_df = result_df[result_df.position .∈ Ref(positions_subset), :]
+
+        # Create violin plot with custom colors and black border - larger elements
+        violin!(ax, subset_df.position, subset_df.error,
+            color=RGBf(0.0431, 0.6471, 0.8745),  # #0BA6DF in RGB
+            show_median=false,
+            strokecolor=:black,  # Black border
+            strokewidth=2.0)     # Thicker border for visibility
+
+        # Add mean value dots with #EF7722 color - larger dots
+        mean_positions = Float64[]
+        mean_values = Float64[]
+        for pos in positions_subset
+            pos_errors = subset_df[subset_df.position .== pos, :error]
+            if !isempty(pos_errors)
+                push!(mean_positions, Float64(pos))
+                push!(mean_values, mean(pos_errors))
+            end
+        end
+        scatter!(ax, mean_positions, mean_values,
+                color=RGBf(0.9373, 0.4667, 0.1333),  # #EF7722 in RGB
+                markersize=12,        # Much larger dots
+                marker=:circle,
+                strokecolor=:black,
+                strokewidth=2.0)     # Thicker border on dots
+
+        # Add zero line for reference - thicker line
+        hlines!(ax, 0.0, color=:black, linestyle=:dash, linewidth=2.0)
+
+        # Ensure violins stay within the specified y-limits
+        # This must be done after creating all plot elements
+        ylims!(ax, y_limits[1], y_limits[2])
+
+        # Rotate x-axis labels for better readability
+        ax.xticklabelrotation = 45
+    end
+
+    # Adjust layout with more spacing for larger fonts
+    rowgap!(fig.layout, 40)   # More space between rows
+    colgap!(fig.layout, 30)   # More space between columns
+
+    save(output_path, fig)
+    println("Violin plot saved to: $output_path")
+end
+
 function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Float64}, predictor_name::String, output_dir::String, prefix::String, target_alpha::Float64, target_rho::Float64, if_normalize::Bool, nearby_normalize::Bool; generate_plots::Bool=false)
     # --- Linear Scaling of Predictor ddG ---
     predictor_col = Symbol(predictor_name * "_ddG")

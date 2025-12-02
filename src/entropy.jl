@@ -371,7 +371,7 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
 
         # Extract metadata and detect data format
         meta = temp["metadata"]
-        mutant_name = lowercase(meta["mutant"])
+        mutant_name = uppercase(meta["mutant"])  # Use uppercase for consistency with experimental data
         
         # Support both single and multi-mutation formats
         # Determine mutation positions (matrix indices) based on data format
@@ -379,14 +379,12 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
         
         # Detect format: new format has "indexing_info" dict
         if auto_detect && haskey(meta, "indexing_info")
-            # New format: mutation_position(s) are actually mutation_id (1-based matrix indices)
-            if haskey(meta, "mutation_positions")
-                # Multi-mutation in new format
-                mutation_matrix_indices = meta["mutation_positions"]
-            else
-                # Single mutation in new format
-                mutation_id = meta["mutation_position"]
-                mutation_matrix_indices = [mutation_id]
+            # New format: use mutation_position and subtract matrix_offset to get matrix index
+            mutation_position = meta["mutation_position"]
+            matrix_offset = meta["indexing_info"]["matrix_offset"]
+            mutation_matrix_idx = mutation_position - matrix_offset
+            if verbose
+                println("Processing $mutant_name: new format (position=$mutation_position, matrix_offset=$matrix_offset, matrix_idx=$mutation_matrix_idx)")
             end
             if verbose
                 println("Processing $mutant_name: new format (mutation_ids=$mutation_matrix_indices)")
