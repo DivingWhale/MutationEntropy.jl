@@ -311,17 +311,28 @@ function calculate_ddgs(
 end
 
 """
-    process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false; auto_detect::Bool=true)::DataFrame
+    process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false)::DataFrame
 
 Process entropy data from saved JLD2 files.
 
-When `auto_detect=true` (default), automatically detects the data format:
-- New format: Uses mutation_id directly as matrix index
-- Old format: Uses mutation_position - residue_offset as matrix index
+Reads JLD2 files with the following structure:
+- metadata["mutation_position"]: biological residue number of mutation
+- metadata["indexing_info"]["matrix_offset"]: offset for converting to matrix index
+- results["all_residues"]["ddS_filtered"]: ddS values array
+- results["nearby_residues"]["ddS_filtered"]: ddS values for nearby residues
 
-When `auto_detect=false`, assumes old format (mutation_position and residue_offset).
+Matrix index is calculated as: mutation_position - matrix_offset
+
+# Arguments
+- `datadir`: Base directory containing mutant subdirectories
+- `param_subdir`: Parameter subdirectory name (e.g., "alpha_0.5_rho_1.0")
+- `nearby_normalize`: If true, divide nearby_ddS by count of nearby residues
+- `verbose`: If true, print progress and warning messages
+
+# Returns
+- DataFrame with columns: mutant, mutant_ddS, nearby_ddS
 """
-function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false; auto_detect::Bool=true)::DataFrame
+function process_entropy_data(datadir::String, param_subdir::String, nearby_normalize::Bool, verbose::Bool=false)::DataFrame
     all_mutant_data = Dict{String, Dict{String, Float64}}()
 
     # Iterate through each mutant directory in the base data directory
@@ -369,137 +380,53 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
             continue
         end
 
-        # Extract metadata and detect data format
+        # Extract metadata
         meta = temp["metadata"]
         mutant_name = uppercase(meta["mutant"])  # Use uppercase for consistency with experimental data
         
-        # Support both single and multi-mutation formats
-        # Determine mutation positions (matrix indices) based on data format
-        local mutation_matrix_indices::Vector{Int}
-        
-        # Detect format: new format has "indexing_info" dict
-        if auto_detect && haskey(meta, "indexing_info")
-            # New format: use mutation_position and subtract matrix_offset to get matrix index
-            mutation_position = meta["mutation_position"]
-            matrix_offset = meta["indexing_info"]["matrix_offset"]
-            mutation_matrix_idx = mutation_position - matrix_offset
-            if verbose
-                println("Processing $mutant_name: new format (position=$mutation_position, matrix_offset=$matrix_offset, matrix_idx=$mutation_matrix_idx)")
-            end
-            if verbose
-                println("Processing $mutant_name: new format (mutation_ids=$mutation_matrix_indices)")
-            end
-        elseif haskey(meta, "residue_offset")
-            # Old format: use bio positions and convert to matrix indices
-            if haskey(meta, "mutation_positions_bio")
-                # Multi-mutation old format
-                mutation_positions_bio = meta["mutation_positions_bio"]
-            elseif haskey(meta, "mutation_positions")
-                mutation_positions_bio = meta["mutation_positions"]
-            else
-                # Single mutation old format
-                mutation_positions_bio = [meta["mutation_position"]]
-            end
-            
-            offset = meta["residue_offset"]
-            mutation_matrix_indices = [pos - offset for pos in mutation_positions_bio]
-            
-            if verbose
-                println("Processing $mutant_name: old format (positions_bio=$mutation_positions_bio, offset=$offset, matrix_indices=$mutation_matrix_indices)")
-            end
-        else
-            println("Unknown data format for mutant $mutant_name. Skipping...")
+        # Validate data format - must have indexing_info
+        if !haskey(meta, "indexing_info")
+            println("Invalid data format for mutant $mutant_name: missing 'indexing_info'. Skipping...")
             continue
+        end
+        
+        # Get mutation position and convert to matrix index
+        mutation_position = meta["mutation_position"]
+        matrix_offset = meta["indexing_info"]["matrix_offset"]
+        mutation_matrix_idx = mutation_position - matrix_offset
+        
+        if verbose
+            println("Processing $mutant_name: position=$mutation_position, matrix_offset=$matrix_offset, matrix_idx=$mutation_matrix_idx")
         end
 
         # Extract results data
         results = temp["results"]
 
-        # Calculate the ddS at all mutation sites (sum for multi-mutation)
+        # Calculate the ddS at mutation site
         local mutant_ddS = 0.0
-        for matrix_idx in mutation_matrix_indices
-            # Ensure index is within bounds
-            if matrix_idx < 1 || matrix_idx > length(results["all_residues"]["ddS_filtered"])
-                if verbose
-                    println("Matrix index $matrix_idx is out of bounds for mutant $mutant_name. Skipping this position...")
-                end
-                continue
-            end
-            
-            val = results["all_residues"]["ddS_filtered"][matrix_idx]
+        ddS_array = results["all_residues"]["ddS_filtered"]
+        if mutation_matrix_idx >= 1 && mutation_matrix_idx <= length(ddS_array)
+            val = ddS_array[mutation_matrix_idx]
             if !isnan(val)
-                mutant_ddS += val
+                mutant_ddS = val
             elseif verbose
-                println("ddS at matrix index $matrix_idx for $mutant_name is NaN. Skipping this position...")
+                println("Warning: NaN ddS value at mutation site for $mutant_name")
             end
-        end
-        
-        if isnan(mutant_ddS) || mutant_ddS == 0.0
+        else
             if verbose
-                println("Total mutant_ddS for $mutant_name is NaN or zero. Skipping...")
+                println("Warning: Matrix index $mutation_matrix_idx out of bounds for $mutant_name (array length: $(length(ddS_array)))")
             end
-            continue
         end
 
-        # Calculate the ddS of nearby residues
+        # Calculate the ddS sum for nearby residues
         local nearby_ddS = 0.0
         local nearby_count = 0
         
         nearby_residues_data = results["nearby_residues"]
-        
-        # Check if we have per-position nearby residues data (multi-mutation format)
-        if haskey(meta, "mutation_positions_bio") || haskey(meta, "mutation_positions")
-            # Multi-mutation format: per-position nearby residues
-            all_nearby_indices = Set{Int}()
-            
-            # Get biological positions for position keys
-            if auto_detect && haskey(meta, "indexing_info")
-                # For new format, we need to reconstruct bio positions if available
-                # For now, use matrix indices as keys might vary
-                # This is a limitation - new format may not have per-position nearby data
-                if verbose
-                    println("Warning: Per-position nearby residues not fully supported in new format for $mutant_name")
-                end
-            else
-                # Old format with bio positions
-                mutation_positions_bio = haskey(meta, "mutation_positions_bio") ? 
-                    meta["mutation_positions_bio"] : 
-                    (haskey(meta, "mutation_positions") ? 
-                        meta["mutation_positions"] : [meta["mutation_position"]])
-                
-                for mutation_pos_bio in mutation_positions_bio
-                    position_key = "pos_$(mutation_pos_bio)"
-                    
-                    if haskey(nearby_residues_data, position_key)
-                        position_data = nearby_residues_data[position_key]
-                        if haskey(position_data, "indices")
-                            union!(all_nearby_indices, position_data["indices"])
-                        end
-                    elseif verbose
-                        println("Warning: No nearby residues data found for position $mutation_pos_bio (key: $position_key) in mutant $mutant_name")
-                    end
-                end
-            end
-            
-            # Calculate ddS sum for all unique nearby residues
-            for idx in all_nearby_indices
-                if idx >= 1 && idx <= length(results["all_residues"]["ddS_filtered"])
-                    val = results["all_residues"]["ddS_filtered"][idx]
-                    if !isnan(val)
-                        nearby_ddS += val
-                        nearby_count += 1
-                    end
-                elseif verbose
-                    println("Warning: Index $idx is out of bounds for mutant $mutant_name")
-                end
-            end
-        else
-            # Single mutation format: simple nearby residues array
-            if haskey(nearby_residues_data, "ddS_filtered")
-                nearby_ddS_values = filter(!isnan, nearby_residues_data["ddS_filtered"])
-                nearby_ddS = sum(nearby_ddS_values)
-                nearby_count = length(nearby_ddS_values)
-            end
+        if haskey(nearby_residues_data, "ddS_filtered")
+            nearby_ddS_values = filter(!isnan, nearby_residues_data["ddS_filtered"])
+            nearby_ddS = sum(nearby_ddS_values)
+            nearby_count = length(nearby_ddS_values)
         end
         
         if verbose && nearby_count == 0

@@ -292,3 +292,91 @@ function read_single_ddG(base_dir::String, variant_name::String)::Union{Float64,
     
     return ddG
 end
+
+"""
+    read_experimental_csv(path::String) -> DataFrame
+
+Read experimental ddG data from a simple CSV file.
+
+Expected CSV format:
+- Column 1: `mutant` - mutation identifier (e.g., "t2h", "A123G")
+- Column 2: `ddG` - experimental ΔΔG value
+
+The mutant column will be converted to uppercase.
+
+# Arguments
+- `path::String`: Path to the CSV file
+
+# Returns
+- `DataFrame`: DataFrame with columns `:mutant` (String) and `:ddG` (Float64)
+"""
+function read_experimental_csv(path::String)::DataFrame
+    if !isfile(path)
+        error("Experimental data file not found: $path")
+    end
+    
+    df = CSV.read(path, DataFrame)
+    
+    # Validate required columns (compare as strings)
+    col_names = names(df)
+    if !("mutant" in col_names) || !("ddG" in col_names)
+        error("CSV must have 'mutant' and 'ddG' columns. Found: $(col_names)")
+    end
+    
+    # Convert mutant to uppercase and filter missing values
+    df.mutant = uppercase.(string.(df.mutant))
+    df = filter(row -> !ismissing(row.ddG) && !isnan(row.ddG), df)
+    
+    return df
+end
+
+"""
+    read_pythia_txt(filepath::String; offset::Int=0) -> Dict{String, Float64}
+
+Read Pythia prediction results from a text file.
+
+Pythia outputs mutations in AF3 index format: `M1A value`
+This function converts AF3 indices to PDB residue numbers using the offset.
+
+# Arguments
+- `filepath::String`: Path to the Pythia output file
+- `offset::Int`: Offset to add to AF3 index to get PDB residue number (default: 0)
+
+# Returns
+- `Dict{String, Float64}`: Dictionary mapping mutation strings (e.g., "M227A") to ddG values
+"""
+function read_pythia_txt(filepath::String; offset::Int=0)
+    ddg_dict = Dict{String, Float64}()
+    open(filepath, "r") do file
+        for line in eachline(file)
+            line = strip(line)
+            if !isempty(line)
+                parts = split(line)
+                if length(parts) == 2
+                    # Pythia format: M1A (source_aa + AF3_index + target_aa)
+                    mutation_af3 = uppercase(parts[1])
+                    ddg_value = parse(Float64, parts[2])
+                    
+                    # Parse the mutation string
+                    if length(mutation_af3) >= 3
+                        source_aa = mutation_af3[1]
+                        target_aa = mutation_af3[end]
+                        af3_index_str = mutation_af3[2:end-1]
+                        
+                        try
+                            af3_index = parse(Int, af3_index_str)
+                            # Convert AF3 index to PDB residue number
+                            pdb_residue = af3_index + offset
+                            # Create mutation in PDB format
+                            mutation_pdb = string(source_aa, pdb_residue, target_aa)
+                            ddg_dict[mutation_pdb] = ddg_value
+                        catch e
+                            println("Warning: Could not parse mutation '$mutation_af3': $e")
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return ddg_dict
+end

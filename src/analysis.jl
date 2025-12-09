@@ -29,11 +29,10 @@ function calculate_mse_per_position(merged_df::DataFrame, ddG_corrected::Vector{
 end
 
 """
-    plot_violin_by_position(result_df::DataFrame, predictor_name::String, output_path::String, A::Float64)
+    plot_swarm_by_position(result_df::DataFrame, predictor_name::String, output_path::String, A::Float64)
 
-Create violin plots showing error distribution for each mutated position.
+Create swarm plots (beeswarm) showing error distribution for each mutated position.
 Handles >20 sites by creating multiple subplots with 20 sites per row.
-Uses mean value (red line) instead of median.
 
 # Arguments
 - `result_df`: DataFrame containing position and error columns
@@ -41,12 +40,24 @@ Uses mean value (red line) instead of median.
 - `output_path`: Path to save the plot
 - `A`: The A parameter value used for correction
 """
-function plot_violin_by_position(result_df::DataFrame, predictor_name::String, output_path::String, A::Float64)
+function plot_swarm_by_position(result_df::DataFrame, predictor_name::String, output_path::String, A::Float64)
+    # Check for empty data
+    if isempty(result_df)
+        @warn "Empty result DataFrame, skipping plot: $output_path"
+        return
+    end
+    
     mkpath(dirname(output_path))
 
     # Get all positions and sort them
     all_positions = sort(unique(result_df.position))
     n_positions = length(all_positions)
+    
+    if n_positions == 0
+        @warn "No positions found in result DataFrame, skipping plot: $output_path"
+        return
+    end
+    
     sites_per_row = 20
     n_rows = ceil(Int, n_positions / sites_per_row)
 
@@ -87,29 +98,12 @@ function plot_violin_by_position(result_df::DataFrame, predictor_name::String, o
         # Filter data for this subset of positions
         subset_df = result_df[result_df.position .∈ Ref(positions_subset), :]
 
-        # Create violin plot with custom colors and black border - larger elements
-        violin!(ax, subset_df.position, subset_df.error,
+        # Create swarm plot using SwarmMakie
+        beeswarm!(ax, subset_df.position, subset_df.error,
             color=RGBf(0.0431, 0.6471, 0.8745),  # #0BA6DF in RGB
-            show_median=false,
-            strokecolor=:black,  # Black border
-            strokewidth=2.0)     # Thicker border for visibility
-
-        # Add mean value dots with #EF7722 color - larger dots
-        mean_positions = Float64[]
-        mean_values = Float64[]
-        for pos in positions_subset
-            pos_errors = subset_df[subset_df.position .== pos, :error]
-            if !isempty(pos_errors)
-                push!(mean_positions, Float64(pos))
-                push!(mean_values, mean(pos_errors))
-            end
-        end
-        scatter!(ax, mean_positions, mean_values,
-                color=RGBf(0.9373, 0.4667, 0.1333),  # #EF7722 in RGB
-                markersize=12,        # Much larger dots
-                marker=:circle,
-                strokecolor=:black,
-                strokewidth=2.0)     # Thicker border on dots
+            markersize=10,
+            strokecolor=:black,
+            strokewidth=1.0)
 
         # Add zero line for reference - thicker line
         hlines!(ax, 0.0, color=:black, linestyle=:dash, linewidth=2.0)
@@ -127,7 +121,7 @@ function plot_violin_by_position(result_df::DataFrame, predictor_name::String, o
     colgap!(fig.layout, 30)   # More space between columns
 
     save(output_path, fig)
-    println("Violin plot saved to: $output_path")
+    println("Swarm plot saved to: $output_path")
 end
 
 function perform_correlation_analysis(merged_df::DataFrame, A_values::Vector{Float64}, predictor_name::String, output_dir::String, prefix::String, target_alpha::Float64, target_rho::Float64, if_normalize::Bool, nearby_normalize::Bool; generate_plots::Bool=false)
