@@ -5,8 +5,8 @@ function read_pae_for_round_legacy(data_path::String, mutation::AbstractString, 
     seed_dirs = sort(glob("seed-*_sample-0", round_dir))
     isempty(seed_dirs) && return nothing
 
-    confidence_file = joinpath(first(seed_dirs), "confidences.json")
-    !isfile(confidence_file) && return nothing
+    confidence_file = _find_confidence_file(first(seed_dirs))
+    confidence_file === nothing && return nothing
 
     try
         raw_data = JSON.parsefile(confidence_file)
@@ -21,8 +21,8 @@ end
 function read_pae_from_path(pae_path::String)::Union{Matrix{Float64}, Nothing}
     !isdir(pae_path) && return nothing
 
-    confidence_file = joinpath(pae_path, "confidences.json")
-    !isfile(confidence_file) && return nothing
+    confidence_file = _find_confidence_file(pae_path)
+    confidence_file === nothing && return nothing
 
     try
         raw_data = JSON.parsefile(confidence_file)
@@ -209,9 +209,14 @@ function compute_single_distance_matrix_legacy(datadir::String, mutation::String
     end
     
     subfolder = subfolders[1]
-    model_pdb = joinpath(subfolder, "model.pdb")
     
-    _ensure_pdb_from_cif_if_needed(subfolder, model_pdb)
+    # Find PDB file with either naming convention
+    model_pdb = _find_pdb_file(subfolder)
+    if model_pdb === nothing
+        # Try to create from CIF
+        model_pdb = joinpath(subfolder, "model.pdb")
+        _ensure_pdb_from_cif_if_needed(subfolder, model_pdb)
+    end
 
     d_matrix_file = joinpath(subfolder, "d_matrix.jld2")
     
@@ -297,7 +302,6 @@ function compute_dist_matrix_from_path(model_dir::String)
         return nothing
     end
     
-    model_pdb = joinpath(model_dir, "model.pdb")
     d_matrix_file = joinpath(model_dir, "d_matrix.jld2")
 
     # First, check for a pre-computed distance matrix
@@ -310,10 +314,16 @@ function compute_dist_matrix_from_path(model_dir::String)
     end
 
     # If not found or failed to load, compute it from the PDB file
-    _ensure_pdb_from_cif_if_needed(model_dir, model_pdb)
-    if !isfile(model_pdb)
-        @warn "PDB file not found after ensuring conversion: $model_pdb"
-        return nothing
+    # Find PDB file with either naming convention
+    model_pdb = _find_pdb_file(model_dir)
+    if model_pdb === nothing
+        # Try to create from CIF
+        model_pdb = joinpath(model_dir, "model.pdb")
+        _ensure_pdb_from_cif_if_needed(model_dir, model_pdb)
+        if !isfile(model_pdb)
+            @warn "PDB file not found after ensuring conversion: $model_dir"
+            return nothing
+        end
     end
 
     try
@@ -393,6 +403,11 @@ end
 
 function get_best_samples(mutation_dir::String)::Dict{Int, Int}
     ranking_file = joinpath(mutation_dir, "ranking_scores.csv")
+    if !isfile(ranking_file)
+        dir_name = basename(mutation_dir)
+        alt_file = joinpath(mutation_dir, "$(dir_name)_ranking_scores.csv")
+        ranking_file = isfile(alt_file) ? alt_file : ranking_file
+    end
     !isfile(ranking_file) && return Dict{Int, Int}()
 
     try

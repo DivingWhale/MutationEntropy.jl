@@ -1,3 +1,42 @@
+"""Helper function to find confidence file with either naming convention."""
+function _find_confidence_file(sample_dir::String)::Union{String, Nothing}
+    # Try old naming convention first
+    old_name = joinpath(sample_dir, "confidences.json")
+    isfile(old_name) && return old_name
+    
+    # Try new naming convention: <prefix>_confidences.json
+    pattern = glob("*_confidences.json", sample_dir)
+    !isempty(pattern) && return first(pattern)
+    
+    return nothing
+end
+
+"""Helper function to find model.cif with either naming convention."""
+function _find_cif_file(sample_dir::String)::Union{String, Nothing}
+    # Try old naming convention first
+    old_name = joinpath(sample_dir, "model.cif")
+    isfile(old_name) && return old_name
+    
+    # Try new naming convention: <prefix>_model.cif
+    pattern = glob("*_model.cif", sample_dir)
+    !isempty(pattern) && return first(pattern)
+    
+    return nothing
+end
+
+"""Helper function to find model.pdb with either naming convention."""
+function _find_pdb_file(sample_dir::String)::Union{String, Nothing}
+    # Try old naming convention first
+    old_name = joinpath(sample_dir, "model.pdb")
+    isfile(old_name) && return old_name
+    
+    # Try new naming convention: <prefix>_model.pdb
+    pattern = glob("*_model.pdb", sample_dir)
+    !isempty(pattern) && return first(pattern)
+    
+    return nothing
+end
+
 function extract_parts(genetic_string::String)
     m= match(r"(\d+)([A-Za-z]*)", genetic_string)
     return m !== nothing ? (parse(Int, m.captures[1]), m.captures[2]) : (nothing, nothing)
@@ -99,15 +138,15 @@ function _ensure_pdb_from_cif_if_needed(subfolder::String, model_pdb_path::Strin
     end
 
     # Check if CIF file exists as a source for conversion
-    cif_file = joinpath(subfolder, "model.cif")
-    if !isfile(cif_file)
-        
+    cif_file = _find_cif_file(subfolder)
+    if cif_file === nothing
         error("Neither PDB nor CIF file found in $subfolder") 
     end
 
     # Convert CIF to PDB using Python script with conda environment
     script_path = abspath(joinpath(@__DIR__, "convert.py"))
-    subfolder_abs = abspath(subfolder)
+    cif_file_abs = abspath(cif_file)
+    model_pdb_abs = abspath(model_pdb_path)
     conda_env = "bio" # As used in the original code
     
     # Find conda executable
@@ -137,7 +176,7 @@ function _ensure_pdb_from_cif_if_needed(subfolder::String, model_pdb_path::Strin
         end
     end
 
-    cmd = `$conda_exe run -n $conda_env python $script_path $subfolder_abs`
+    cmd = `$conda_exe run -n $conda_env python $script_path $cif_file_abs $model_pdb_abs`
 
     try
         run(cmd)
@@ -177,16 +216,20 @@ function get_low_plddt_residues(mutation::String, round_val::Int, datadir::Strin
     end
     
     subfolder = subfolders[1]
-    model_pdb = joinpath(subfolder, "model.pdb")
-    # temp_pdb = "$(mutation)_temp_pl.pdb" # This variable was unused in the original.
     
-    _ensure_pdb_from_cif_if_needed(subfolder, model_pdb) # Handles PDB creation
+    # Find PDB file with either naming convention
+    model_pdb = _find_pdb_file(subfolder)
+    if model_pdb === nothing
+        # Try to create from CIF
+        model_pdb = joinpath(subfolder, "model.pdb")
+        _ensure_pdb_from_cif_if_needed(subfolder, model_pdb)
+    end
 
     structure = read(model_pdb, PDBFormat)
     
-    confidence_file = joinpath(subfolder, "confidences.json")
-    if !isfile(confidence_file)
-        error("Confidence file not found: $confidence_file")
+    confidence_file = _find_confidence_file(subfolder)
+    if confidence_file === nothing
+        error("Confidence file not found in $subfolder")
     end
     
     confidence_data = JSON.parsefile(confidence_file)
