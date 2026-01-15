@@ -390,31 +390,42 @@ function process_entropy_data(datadir::String, param_subdir::String, nearby_norm
             continue
         end
         
-        # Get mutation position and convert to matrix index
-        mutation_position = meta["mutation_position"]
+        # Get mutation positions (handle both new and old metadata formats)
+        mutation_positions = Int[]
+        if haskey(meta, "mutation_positions")
+            append!(mutation_positions, meta["mutation_positions"])
+        elseif haskey(meta, "mutation_position")
+            # Minimal fallback for single mutants in old format
+            push!(mutation_positions, meta["mutation_position"])
+        end
+
         matrix_offset = meta["indexing_info"]["matrix_offset"]
-        mutation_matrix_idx = mutation_position - matrix_offset
         
         if verbose
-            println("Processing $mutant_name: position=$mutation_position, matrix_offset=$matrix_offset, matrix_idx=$mutation_matrix_idx")
+            println("Processing $mutant_name: positions=$mutation_positions, matrix_offset=$matrix_offset")
         end
 
         # Extract results data
         results = temp["results"]
 
-        # Calculate the ddS at mutation site
+        # Calculate the ddS at mutation site (Sum of ddS at all mutation positions)
         local mutant_ddS = 0.0
         ddS_array = results["all_residues"]["ddS_filtered"]
-        if mutation_matrix_idx >= 1 && mutation_matrix_idx <= length(ddS_array)
-            val = ddS_array[mutation_matrix_idx]
-            if !isnan(val)
-                mutant_ddS = val
-            elseif verbose
-                println("Warning: NaN ddS value at mutation site for $mutant_name")
-            end
-        else
-            if verbose
-                println("Warning: Matrix index $mutation_matrix_idx out of bounds for $mutant_name (array length: $(length(ddS_array)))")
+        
+        for pos in mutation_positions
+            mutation_matrix_idx = pos - matrix_offset
+            
+            if mutation_matrix_idx >= 1 && mutation_matrix_idx <= length(ddS_array)
+                val = ddS_array[mutation_matrix_idx]
+                if !isnan(val)
+                    mutant_ddS += val
+                elseif verbose
+                    println("Warning: NaN ddS value at mutation site $pos for $mutant_name")
+                end
+            else
+                if verbose
+                    println("Warning: Matrix index $mutation_matrix_idx out of bounds for $mutant_name (pos: $pos, array length: $(length(ddS_array)))")
+                end
             end
         end
 
